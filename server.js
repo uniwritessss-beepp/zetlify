@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { MongoClient } = require('mongodb');
-
+const path = require('path');
 const app = express();
 
 // Render (and most hosts) inject the port to listen on via process.env.PORT
@@ -28,6 +28,16 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   next();
 });
+
+// ─── SERVE STATIC FRONTEND (FIX FOR "Cannot GET /") ──────────
+// Serve static files (like index.html, CSS, JS) from the current directory
+app.use(express.static(__dirname));
+
+// Explicitly serve index.html at the root route
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+// ─── END STATIC SERVE ─────────────────────────────────────────
 
 // ─── MongoDB connection ──────────────────────────────────────
 const MONGODB_URI = 'mongodb+srv://elitecinezo_db_user:g485P3ELoeP8REkD@cluster0.tsw1i0i.mongodb.net/subscription_hub?retryWrites=true&w=majority';
