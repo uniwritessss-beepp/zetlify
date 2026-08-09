@@ -434,7 +434,26 @@
 
     /* ─── Purchase loading animation: a little red runner chasing after
        a couple of bouncy bags/boxes, looping while the purchase saves ─── */
-    .chase-scene { position:relative; width:220px; height:70px; margin:0 auto; overflow:hidden; }
+    .processing-card { animation: proc-card-in .35s cubic-bezier(.34,1.56,.64,1); }
+    @keyframes proc-card-in { from { opacity:0; transform:scale(.88) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
+    .processing-glow-wrap { position:relative; width:220px; height:70px; margin:0 auto; }
+    .processing-glow-ring { position:absolute; left:50%; top:50%; border-radius:50%; border:1px solid rgba(var(--t-primary),0.35); transform:translate(-50%,-50%); pointer-events:none; }
+    .processing-glow-ring.r1 { width:90px; height:90px; animation:proc-ring-pulse 2.4s ease-out infinite; }
+    .processing-glow-ring.r2 { width:90px; height:90px; animation:proc-ring-pulse 2.4s ease-out infinite; animation-delay:.8s; }
+    .processing-glow-ring.r3 { width:90px; height:90px; animation:proc-ring-pulse 2.4s ease-out infinite; animation-delay:1.6s; }
+    @keyframes proc-ring-pulse { 0% { width:50px; height:50px; opacity:.7; border-color:rgba(var(--t-primary),0.6); } 100% { width:230px; height:110px; opacity:0; border-color:rgba(var(--t-primary),0); } }
+    .processing-sparkle { position:absolute; border-radius:50%; background:var(--t-primary-hex); box-shadow:0 0 6px rgba(var(--t-primary),0.9); animation:proc-sparkle-float 2.2s ease-in-out infinite; }
+    .processing-sparkle.s1 { width:4px; height:4px; top:6px; left:18%; animation-delay:0s; }
+    .processing-sparkle.s2 { width:3px; height:3px; top:50px; left:78%; animation-delay:.5s; }
+    .processing-sparkle.s3 { width:3px; height:3px; top:14px; left:88%; animation-delay:1.1s; }
+    .processing-sparkle.s4 { width:4px; height:4px; top:56px; left:8%; animation-delay:1.6s; }
+    @keyframes proc-sparkle-float { 0%, 100% { opacity:0; transform:translateY(0) scale(.6); } 40% { opacity:1; transform:translateY(-6px) scale(1); } }
+    .processing-status-text { display:inline-block; animation:proc-text-swap .5s ease; }
+    @keyframes proc-text-swap { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+    .processing-bar-track { width:200px; height:5px; margin:14px auto 0; border-radius:99px; background:rgba(255,255,255,0.08); overflow:hidden; position:relative; }
+    .processing-bar-fill { position:absolute; top:0; bottom:0; width:40%; border-radius:99px; background:linear-gradient(90deg, transparent, var(--t-primary-hex), #fecaca, var(--t-primary-hex), transparent); animation:proc-bar-sweep 1.4s ease-in-out infinite; }
+    @keyframes proc-bar-sweep { 0% { left:-45%; } 100% { left:105%; } }
+    .chase-scene { position:relative; width:220px; height:70px; margin:0 auto; overflow:hidden; z-index:1; }
     .chaser { position:absolute; bottom:12px; left:-46px; width:38px; height:38px; border-radius:50%;
       background:linear-gradient(145deg, var(--t-primary-hex), #b91c1c); box-shadow:0 4px 14px rgba(var(--t-primary),.55);
       animation:chase-run 1.6s linear infinite; }
@@ -3846,6 +3865,22 @@
     // visible, physical layer on top of it — while it's up, there is
     // literally nothing to click, tap, or double-tap through to.
     function ProcessingOverlay({ show }) {
+      const STATUS_MESSAGES = [
+        'Securing your order…',
+        'Reserving your screens…',
+        'Locking in the details…',
+        'Almost there…'
+      ];
+      const [msgIndex, setMsgIndex] = useState(0);
+
+      useEffect(() => {
+        if (!show) { setMsgIndex(0); return; }
+        const id = setInterval(() => {
+          setMsgIndex(i => (i + 1) % STATUS_MESSAGES.length);
+        }, 1700);
+        return () => clearInterval(id);
+      }, [show]);
+
       if (!show) return null;
       return (
         <div
@@ -3855,22 +3890,32 @@
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
         >
-          <div className="text-center px-6">
-            <div className="chase-scene">
-              <div className="chaser">
-                <span className="chaser-hand"><i className="fas fa-hand-paper"></i></span>
-                <div className="chaser-face">
-                  <span className="chaser-eye"></span>
-                  <span className="chaser-eye"></span>
+          <div className="text-center px-6 processing-card">
+            <div className="processing-glow-wrap">
+              <div className="processing-glow-ring r1"></div>
+              <div className="processing-glow-ring r2"></div>
+              <div className="processing-glow-ring r3"></div>
+              <div className="processing-sparkle s1"></div>
+              <div className="processing-sparkle s2"></div>
+              <div className="processing-sparkle s3"></div>
+              <div className="processing-sparkle s4"></div>
+              <div className="chase-scene">
+                <div className="chaser">
+                  <span className="chaser-hand"><i className="fas fa-hand-paper"></i></span>
+                  <div className="chaser-face">
+                    <span className="chaser-eye"></span>
+                    <span className="chaser-eye"></span>
+                  </div>
+                  <span className="chaser-mouth"></span>
+                  <span className="chaser-leg chaser-leg-l"></span>
+                  <span className="chaser-leg chaser-leg-r"></span>
                 </div>
-                <span className="chaser-mouth"></span>
-                <span className="chaser-leg chaser-leg-l"></span>
-                <span className="chaser-leg chaser-leg-r"></span>
+                <div className="fleeing-item fleeing-item-1"><i className="fas fa-shopping-bag"></i></div>
+                <div className="fleeing-item fleeing-item-2"><i className="fas fa-box"></i></div>
               </div>
-              <div className="fleeing-item fleeing-item-1"><i className="fas fa-shopping-bag"></i></div>
-              <div className="fleeing-item fleeing-item-2"><i className="fas fa-box"></i></div>
             </div>
-            <p className="text-white/80 text-sm mt-4 font-medium">Processing your purchase — hang tight!</p>
+            <div className="processing-bar-track"><div className="processing-bar-fill"></div></div>
+            <p key={msgIndex} className="text-white/80 text-sm mt-4 font-medium processing-status-text">{STATUS_MESSAGES[msgIndex]}</p>
             <p className="text-white/40 text-xs mt-1">Please don't click again.</p>
           </div>
         </div>
