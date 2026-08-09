@@ -98,7 +98,40 @@ async function connectDB() {
   socialCartCollection = db.collection('socialCart');
   await ensureAuthSecret(); // load or create the server-only token-signing secret
   await ensureCredKey(); // load or create the server-only customer-password encryption key
+  await ensureIndexes(); // speed up the lookups login/signup/purchase depend on
   console.log('✅ Connected to MongoDB');
+}
+
+// ─── Indexes ──────────────────────────────────────────────────────
+// Without these, every lookup by username, whatsapp number, or a document's
+// custom `id` field (subscriptions, deals, promotions, social services,
+// waiting-list entries, OTPs) had to scan every document in the collection
+// to find its match — that full scan is exactly what made login, signup,
+// and purchase (which allocates a screen by subscription id, then re-reads
+// it) feel slow, and it only gets slower as the collections grow. None of
+// these change what a query returns, only how fast MongoDB finds it.
+// Index creation is idempotent (createIndex on an index that already
+// exists is a no-op) and safe to re-run on every server start. Any single
+// failure is logged rather than crashing startup — a slow query is far
+// better than a server that won't boot.
+async function ensureIndexes() {
+  const jobs = [
+    usersCollection.createIndex({ username: 1 }),
+    usersCollection.createIndex({ whatsapp: 1 }),
+    subscriptionsCollection.createIndex({ id: 1 }),
+    dealsCollection.createIndex({ id: 1 }),
+    promotionsCollection.createIndex({ id: 1 }),
+    socialServicesCollection.createIndex({ id: 1 }),
+    waitingCollection.createIndex({ id: 1 }),
+    customGrantsCollection.createIndex({ id: 1 }),
+    customGrantsCollection.createIndex({ username: 1 }),
+    otpsCollection.createIndex({ otp: 1 }),
+    creditHistoryCollection.createIndex({ username: 1, createdAt: -1 }),
+  ];
+  const results = await Promise.allSettled(jobs);
+  results.forEach(r => {
+    if (r.status === 'rejected') console.error('⚠️ Index creation failed (continuing anyway):', r.reason?.message || r.reason);
+  });
 }
 
 // ─── Idempotency guard ──────────────────────────────────────
@@ -1072,13 +1105,17 @@ app.post('/api/users/signup', async (req, res) => {
     if (password === username) {
       return res.status(400).json({ error: 'Password must be different from username' });
     }
-    const existing = await usersCollection.findOne({ username });
+    // Both checks are independent — running them together instead of one
+    // after another halves the wait for this step.
+    const [existing, existingWhatsapp] = await Promise.all([
+      usersCollection.findOne({ username }),
+      usersCollection.findOne({ whatsapp })
+    ]);
     if (existing) {
       return res.status(400).json({ error: 'Username already exists' });
     }
     // One account per WhatsApp number — without this, the same person
     // could keep creating fresh accounts indefinitely.
-    const existingWhatsapp = await usersCollection.findOne({ whatsapp });
     if (existingWhatsapp) {
       return res.status(400).json({ error: 'An account with this WhatsApp number already exists' });
     }

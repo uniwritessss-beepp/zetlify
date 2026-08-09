@@ -10571,9 +10571,12 @@
       };
 
       const handleLogin = async (userData) => {
+        // userData is already the fresh record the server just returned
+        // from login/signup — re-fetching it here was a second, redundant
+        // network round-trip before the UI could move on, which is exactly
+        // what made login/signup feel slower than it needed to.
         setUser(userData);
         setShowAuth(false);
-        await refreshUser();
         setFlowStep('welcome');
         setActiveTab('subscriptions');
         setShowSubscriptions(true);
