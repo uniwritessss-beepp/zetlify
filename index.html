@@ -6926,24 +6926,30 @@
           addToast('Please type a message first', 'error');
           return;
         }
+        const text = newNoticeMessage.trim();
+        const tempId = 'temp-' + Date.now();
+        setNoticesList(prev => [{ id: tempId, text }, ...prev]);
+        setNewNoticeMessage('');
+        addToast('Broadcast sent — every customer will see it on their Notice Board.', 'success');
         try {
-          const entry = await createNotice(newNoticeMessage.trim());
-          setNoticesList(prev => [entry, ...prev]);
-          setNewNoticeMessage('');
-          addToast('Broadcast sent — every customer will see it on their Notice Board.', 'success');
+          const entry = await createNotice(text);
+          setNoticesList(prev => prev.map(n => n.id === tempId ? entry : n));
         } catch (err) {
-          addToast(err.error || err.message || 'Failed to send broadcast', 'error');
+          setNoticesList(prev => prev.filter(n => n.id !== tempId));
+          addToast(err.error || err.message || 'Failed to send broadcast — removed, please try again', 'error');
         }
       };
 
       const handleDeleteNotice = async (id) => {
         if (!window.confirm('Remove this broadcast message? It will disappear from every customer\'s board.')) return;
+        const before = noticesList;
+        setNoticesList(prev => prev.filter(n => n.id !== id));
+        addToast('Broadcast removed.', 'warning');
         try {
           await deleteNotice(id);
-          setNoticesList(prev => prev.filter(n => n.id !== id));
-          addToast('Broadcast removed.', 'warning');
         } catch (err) {
-          addToast(err.message || 'Failed to remove broadcast', 'error');
+          setNoticesList(before);
+          addToast(err.message || 'Failed to remove broadcast — restored', 'error');
         }
       };
 
@@ -6952,29 +6958,35 @@
           addToast('Please fill in both the question and the answer', 'error');
           return;
         }
+        const draft = {
+          question: newFaqQuestion.trim(),
+          answer: newFaqAnswer.trim(),
+          category: newFaqCategory.trim() || 'General'
+        };
+        const tempId = 'temp-' + Date.now();
+        setFaqsList(prev => [...prev, { ...draft, id: tempId }]);
+        setNewFaqQuestion('');
+        setNewFaqAnswer('');
+        setNewFaqCategory('General');
+        addToast('Question added to Help & FAQs.', 'success');
         try {
-          const entry = await addFaq({
-            question: newFaqQuestion.trim(),
-            answer: newFaqAnswer.trim(),
-            category: newFaqCategory.trim() || 'General'
-          });
-          setFaqsList(prev => [...prev, entry]);
-          setNewFaqQuestion('');
-          setNewFaqAnswer('');
-          setNewFaqCategory('General');
-          addToast('Question added to Help & FAQs.', 'success');
+          const entry = await addFaq(draft);
+          setFaqsList(prev => prev.map(f => f.id === tempId ? entry : f));
         } catch (err) {
-          addToast('Failed to add question: ' + (err?.error || 'unknown error'), 'error');
+          setFaqsList(prev => prev.filter(f => f.id !== tempId));
+          addToast('Failed to add question: ' + (err?.error || 'unknown error') + ' — removed', 'error');
         }
       };
 
       const handleDeleteFaq = async (id) => {
+        const before = faqsList;
+        setFaqsList(prev => prev.filter(f => f.id !== id));
+        addToast('Question removed.', 'success');
         try {
           await deleteFaq(id);
-          setFaqsList(prev => prev.filter(f => f.id !== id));
-          addToast('Question removed.', 'success');
         } catch (err) {
-          addToast('Failed to remove question', 'error');
+          setFaqsList(before);
+          addToast('Failed to remove question — restored', 'error');
         }
       };
 
@@ -7147,14 +7159,21 @@
           accounts: [],
           createdAt: new Date().toISOString()
         };
+        // Optimistic: show it immediately and close the form, instead of
+        // making the admin stare at a frozen modal during the network
+        // round trip. If the save actually fails, the entry is removed
+        // again and an error toast explains it didn't stick.
+        setSubscriptions(prev => [...prev, newSub]);
+        markPendingWrite(newSub.id);
+        resetAddForm();
+        addToast(`Added ${newSub.name}!`, 'success');
         try {
           const result = await createSubscription(newSub);
-          setSubscriptions(prev => [...prev, result]);
-          resetAddForm();
-          refreshData(true); // background sync — the action above already saved and its own toast already fired
-          addToast(`Added ${newSub.name}!`, 'success');
+          setSubscriptions(prev => prev.map(s => s.id === newSub.id ? result : s));
+          refreshData(true); // background sync
         } catch (err) {
-          addToast('Failed to add subscription', 'error');
+          setSubscriptions(prev => prev.filter(s => s.id !== newSub.id));
+          addToast(`Failed to save ${newSub.name} — it's been removed, please try again`, 'error');
         }
       };
 
@@ -7176,6 +7195,7 @@
 
       const handleUpdateSubscription = async () => {
         if (!showEditSub) return;
+        const original = showEditSub;
         const updated = {
           name: newSubName.trim(),
           type: newSubType,
@@ -7188,15 +7208,18 @@
           importantNote: newSubImportantNote.trim(),
           logo: newSubLogo || '',
         };
+        setSubscriptions(prev => prev.map(s => s.id === original.id ? { ...s, ...updated } : s));
+        markPendingWrite(original.id);
+        resetAddForm();
+        setShowEditSub(null);
+        addToast('Subscription updated!', 'success');
         try {
-          const result = await updateSubscription(showEditSub.id, updated);
-          setSubscriptions(prev => prev.map(s => s.id === showEditSub.id ? result : s));
-          resetAddForm();
-          setShowEditSub(null);
-          refreshData(true); // background sync — the action above already saved and its own toast already fired
-          addToast('Subscription updated!', 'success');
+          const result = await updateSubscription(original.id, updated);
+          setSubscriptions(prev => prev.map(s => s.id === original.id ? result : s));
+          refreshData(true); // background sync
         } catch (err) {
-          addToast('Failed to update subscription', 'error');
+          setSubscriptions(prev => prev.map(s => s.id === original.id ? original : s));
+          addToast('Failed to save changes — reverted, please try again', 'error');
         }
       };
 
@@ -7206,19 +7229,23 @@
           addToast('Enter a valid amount', 'error');
           return;
         }
+        const amount = creditsAmount;
+        const before = usersList.find(u => u.username === username);
+        // Patch the balance immediately rather than waiting on the network
+        // round trip and then a full reload — the admin sees it update the
+        // instant they click, and this quietly corrects itself from the
+        // real server balance a moment later regardless.
+        setUsersList(prev => prev.map(u => u.username === username ? { ...u, credits: (u.credits || 0) + amount } : u));
+        addToast(`Added ${amount} credits to ${username}`, 'success');
+        setCreditsAmount(0);
+        setSelectedUserForCredits(null);
         try {
-          const updated = await addCredits(username, creditsAmount, 'Added by admin');
-          if (updated) {
-            addToast(`Added ${creditsAmount} credits to ${username}`, 'success');
-            setCreditsAmount(0);
-            setSelectedUserForCredits(null);
-            await loadUsers();
-            if (user && user.username === username) {
-              await refreshUser();
-            }
-          }
+          const updated = await addCredits(username, amount, 'Added by admin');
+          if (updated) setUsersList(prev => prev.map(u => u.username === username ? { ...u, credits: updated.credits } : u));
+          if (user && user.username === username) await refreshUser();
         } catch (err) {
-          addToast('Failed to add credits', 'error');
+          if (before) setUsersList(prev => prev.map(u => u.username === username ? before : u));
+          addToast(`Failed to add credits to ${username} — reverted`, 'error');
         }
       };
 
@@ -7227,30 +7254,32 @@
           addToast('Enter a valid amount', 'error');
           return;
         }
+        const amount = creditsAmount;
+        const before = usersList.find(u => u.username === username);
+        setUsersList(prev => prev.map(u => u.username === username ? { ...u, credits: Math.max(0, (u.credits || 0) - amount) } : u));
+        addToast(`Deducted ${amount} credits from ${username}`, 'success');
+        setCreditsAmount(0);
+        setSelectedUserForCredits(null);
         try {
-          const updated = await deductCredits(username, creditsAmount, null, 'Deducted by admin');
-          if (updated) {
-            addToast(`Deducted ${creditsAmount} credits from ${username}`, 'success');
-            setCreditsAmount(0);
-            setSelectedUserForCredits(null);
-            await loadUsers();
-            if (user && user.username === username) {
-              await refreshUser();
-            }
-          }
+          const updated = await deductCredits(username, amount, null, 'Deducted by admin');
+          if (updated) setUsersList(prev => prev.map(u => u.username === username ? { ...u, credits: updated.credits } : u));
+          if (user && user.username === username) await refreshUser();
         } catch (err) {
-          addToast('Failed to deduct credits: ' + err.error, 'error');
+          if (before) setUsersList(prev => prev.map(u => u.username === username ? before : u));
+          addToast('Failed to deduct credits: ' + (err.error || 'unknown error') + ' — reverted', 'error');
         }
       };
 
       const handleDeleteUser = async (username) => {
         if (!window.confirm(`Delete the account "${username}"? This only removes their login — any subscriptions already granted to them stay untouched.`)) return;
+        const before = usersList;
+        setUsersList(prev => prev.filter(u => u.username !== username));
+        addToast(`User "${username}" deleted.`, 'warning');
         try {
           await deleteUserAPI(username);
-          addToast(`User "${username}" deleted.`, 'warning');
-          await loadUsers();
         } catch (err) {
-          addToast(err.message || 'Failed to delete user', 'error');
+          setUsersList(before);
+          addToast(err.message || `Failed to delete "${username}" — restored`, 'error');
         }
       };
 
@@ -7270,9 +7299,10 @@
           if (userEditForm.password.trim()) payload.password = userEditForm.password.trim();
           await updateUserAPI(editingUser, payload);
           addToast('User updated.', 'success');
+          const oldUsername = editingUser;
           closeUserEditModal();
-          await loadUsers();
-          if (user && user.username === editingUser) await refreshUser();
+          setUsersList(prev => prev.map(u => u.username === oldUsername ? { ...u, username: payload.username, whatsapp: payload.whatsapp } : u));
+          if (user && user.username === oldUsername) await refreshUser();
         } catch (err) {
           addToast(err.message || 'Failed to update user', 'error');
         }
@@ -7302,16 +7332,17 @@
             addToast(result.error, 'error');
             return;
           }
-          // signup always starts a user on 50 credits — top up/adjust here if a different amount was requested
+          let finalCredits = 50; // signup always starts a user on 50 credits
           const desiredCredits = Number(addUserForm.credits);
           if (!isNaN(desiredCredits) && desiredCredits !== 50) {
             const diff = desiredCredits - 50;
             if (diff > 0) await addCredits(username, diff, 'Balance corrected by admin');
             else if (diff < 0) await deductCredits(username, Math.abs(diff), null, 'Balance corrected by admin').catch(() => {});
+            finalCredits = desiredCredits;
           }
+          setUsersList(prev => [{ name, username, whatsapp, credits: finalCredits, createdAt: new Date().toISOString() }, ...prev]);
           addToast(`User "${username}" created.`, 'success');
           closeAddUserModal();
-          await loadUsers();
         } catch (err) {
           addToast(err.message || 'Failed to create user', 'error');
         } finally {
@@ -7558,40 +7589,43 @@
           socialServiceName,
           socialQuantity: isSocial ? Number(dealForm.socialQuantity) : 0
         };
+        const isEdit = !!editingDeal;
+        const before = deals;
+        setDeals(prev => isEdit ? prev.map(d => d.id === data.id ? data : d) : [...prev, data]);
+        setShowDealModal(false);
+        setEditingDeal(null);
+        addToast(isEdit ? 'Deal updated!' : 'Deal created!', 'success');
         try {
-          if (editingDeal) {
-            await updateDeal(dealForm.id, data);
-            addToast('Deal updated!', 'success');
-          } else {
-            await createDeal(data);
-            addToast('Deal created!', 'success');
-          }
-          setShowDealModal(false);
-          setEditingDeal(null);
-          await loadDeals();
+          if (isEdit) await updateDeal(data.id, data);
+          else await createDeal(data);
+          await loadDeals(); // pick up any server-assigned fields
         } catch (err) {
-          addToast('Failed to save deal', 'error');
+          setDeals(before);
+          addToast('Failed to save deal — reverted, please try again', 'error');
         }
       };
 
       const deleteDealHandler = async (dealId) => {
-        if (window.confirm('Delete this deal?')) {
-          try {
-            await deleteDeal(dealId);
-            addToast('Deal deleted.', 'warning');
-            await loadDeals();
-          } catch (err) {
-            addToast('Failed to delete deal', 'error');
-          }
+        if (!window.confirm('Delete this deal?')) return;
+        const before = deals;
+        setDeals(prev => prev.filter(d => d.id !== dealId));
+        addToast('Deal deleted.', 'warning');
+        try {
+          await deleteDeal(dealId);
+        } catch (err) {
+          setDeals(before);
+          addToast('Failed to delete deal — restored', 'error');
         }
       };
 
       const toggleDealStatus = async (deal) => {
+        const before = deals;
+        setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, active: !d.active } : d));
+        addToast(`Deal ${!deal.active ? 'activated' : 'deactivated'}`, 'success');
         try {
           await updateDeal(deal.id, { ...deal, active: !deal.active });
-          addToast(`Deal ${!deal.active ? 'activated' : 'deactivated'}`, 'success');
-          await loadDeals();
         } catch (err) {
+          setDeals(before);
           addToast('Failed to update deal', 'error');
         }
       };
@@ -7645,40 +7679,43 @@
           image: promoForm.image,
           active: promoForm.active !== undefined ? promoForm.active : true
         };
+        const isEdit = !!editingPromo;
+        const before = promotions;
+        setPromotions(prev => isEdit ? prev.map(p => p.id === data.id ? data : p) : [...prev, data]);
+        setShowPromoModal(false);
+        setEditingPromo(null);
+        addToast(isEdit ? 'Promotion updated!' : 'Promotion created!', 'success');
         try {
-          if (editingPromo) {
-            await updatePromotion(promoForm.id, data);
-            addToast('Promotion updated!', 'success');
-          } else {
-            await createPromotion(data);
-            addToast('Promotion created!', 'success');
-          }
-          setShowPromoModal(false);
-          setEditingPromo(null);
-          await loadPromotions();
+          if (isEdit) await updatePromotion(data.id, data);
+          else await createPromotion(data);
+          await loadPromotions(); // pick up any server-assigned fields
         } catch (err) {
-          addToast('Failed to save promotion', 'error');
+          setPromotions(before);
+          addToast('Failed to save promotion — reverted, please try again', 'error');
         }
       };
 
       const deletePromotionHandler = async (promoId) => {
-        if (window.confirm('Delete this promotion?')) {
-          try {
-            await deletePromotion(promoId);
-            addToast('Promotion deleted.', 'warning');
-            await loadPromotions();
-          } catch (err) {
-            addToast('Failed to delete promotion', 'error');
-          }
+        if (!window.confirm('Delete this promotion?')) return;
+        const before = promotions;
+        setPromotions(prev => prev.filter(p => p.id !== promoId));
+        addToast('Promotion deleted.', 'warning');
+        try {
+          await deletePromotion(promoId);
+        } catch (err) {
+          setPromotions(before);
+          addToast('Failed to delete promotion — restored', 'error');
         }
       };
 
       const togglePromotionStatus = async (promo) => {
+        const before = promotions;
+        setPromotions(prev => prev.map(p => p.id === promo.id ? { ...p, active: !p.active } : p));
+        addToast(`Promotion ${!promo.active ? 'activated' : 'deactivated'}`, 'success');
         try {
           await updatePromotion(promo.id, { ...promo, active: !promo.active });
-          addToast(`Promotion ${!promo.active ? 'activated' : 'deactivated'}`, 'success');
-          await loadPromotions();
         } catch (err) {
+          setPromotions(before);
           addToast('Failed to update promotion', 'error');
         }
       };
@@ -8099,11 +8136,16 @@
         updatedSub.accounts.push(account);
         setSubscriptions(prev => prev.map(s => s.id === subId ? updatedSub : s));
         markPendingWrite(subId);
-        await updateSubscription(subId, updatedSub);
         setNewAccount({ email: '', password: '', screens: [{ name: 'Screen 1', pin: '' }], subscriptionId: '' });
         setShowAddAccount(null);
-        refreshData(true); // background sync — the action above already saved and its own toast already fired
         addToast('Account added!', 'success');
+        try {
+          await updateSubscription(subId, updatedSub);
+          refreshData(true); // background sync
+        } catch (err) {
+          setSubscriptions(prev => prev.map(s => s.id === subId ? sub : s));
+          addToast('Failed to save the new account — reverted, please try again', 'error');
+        }
       };
 
       const addScreenToAccount = () => {
@@ -8141,10 +8183,15 @@
         acc.password = password;
         setSubscriptions(prev => prev.map(s => s.id === subId ? updatedSub : s));
         markPendingWrite(subId);
-        await updateSubscription(subId, updatedSub);
-        refreshData(true); // background sync — the action above already saved and its own toast already fired
         setEditingAccount(null);
         addToast('Account updated!', 'success');
+        try {
+          await updateSubscription(subId, updatedSub);
+          refreshData(true); // background sync
+        } catch (err) {
+          setSubscriptions(prev => prev.map(s => s.id === subId ? sub : s));
+          addToast('Failed to save that change — reverted, please try again', 'error');
+        }
       };
 
       const saveScreenEdit = async () => {
@@ -8161,10 +8208,15 @@
         screen.pin = pin;
         setSubscriptions(prev => prev.map(s => s.id === subId ? updatedSub : s));
         markPendingWrite(subId);
-        await updateSubscription(subId, updatedSub);
-        refreshData(true); // background sync — the action above already saved and its own toast already fired
         setEditingScreen(null);
         addToast('Screen updated!', 'success');
+        try {
+          await updateSubscription(subId, updatedSub);
+          refreshData(true); // background sync
+        } catch (err) {
+          setSubscriptions(prev => prev.map(s => s.id === subId ? sub : s));
+          addToast('Failed to save that change — reverted, please try again', 'error');
+        }
       };
 
       const handleGeneratePassword = async (subId, accId) => {
