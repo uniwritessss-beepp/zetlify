@@ -2566,24 +2566,36 @@ app.get('/api/health', (req, res) => {
 
 // ─── Start server ──────────────────────────────────────────
 
-// Automatically and permanently remove subscription entries that have expired.
-// Uses an atomic $pull across every account/screen at once (no read-modify-write),
-// so it can never collide with or erase a purchase that's being saved at the same time.
+// Safety-net cleanup for very old, clearly-abandoned expired customer
+// entries (well past any reasonable time an admin would reset a screen).
+//
+// IMPORTANT: this used to purge a customer the day *after* their expiry,
+// no matter what — which silently deleted the very record the "screen
+// needs reset" blink in the admin portal depends on. That made screens
+// stop blinking on their own after one day even though the admin never
+// touched the PIN, which is the opposite of what it's supposed to do
+// (blink until the admin actually regenerates the PIN/password). The
+// real, immediate cleanup now happens client-side the moment the admin
+// hits "Gen PIN" (see handleGeneratePin in index.html) — this hourly job
+// is now just a long-window fallback for screens that never got reset at
+// all, so the database doesn't grow forever from truly abandoned entries.
 async function cleanupExpiredCustomers() {
   try {
-    const todayStr = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 45);
+    const cutoffStr = cutoff.toISOString().slice(0, 10); // 'YYYY-MM-DD'
     const result = await subscriptionsCollection.updateMany(
       {},
       {
         $pull: {
           'accounts.$[].screens.$[].customers': {
-            expiryDate: { $exists: true, $ne: '', $lt: todayStr }
+            expiryDate: { $exists: true, $ne: '', $lt: cutoffStr }
           }
         }
       }
     );
     if (result.modifiedCount > 0) {
-      console.log(`🧹 Cleaned up expired customer entries from ${result.modifiedCount} subscription(s)`);
+      console.log(`🧹 Cleaned up long-abandoned (45+ day) expired customer entries from ${result.modifiedCount} subscription(s)`);
     }
   } catch (err) {
     console.error('❌ Cleanup error:', err);

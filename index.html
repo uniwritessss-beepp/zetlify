@@ -8232,6 +8232,22 @@
         // Marks this screen as "handled" — this is what turns the blinking
         // reminder off, since it means access was just revoked/reset.
         screen.pinResetAt = new Date().toISOString();
+        // Now that the PIN has actually changed, any customer(s) on this
+        // screen whose subscription already expired are genuinely done —
+        // safe to drop them here instead of waiting on the server's
+        // once-an-hour safety-net cleanup, which is intentionally a long
+        // way off now so it never clears the blink prematurely on its own.
+        if (screen.customers && screen.customers.length) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          screen.customers = screen.customers.filter(c => {
+            if (!c.expiryDate) return true;
+            const exp = new Date(c.expiryDate);
+            if (isNaN(exp.getTime())) return true;
+            exp.setHours(0, 0, 0, 0);
+            return exp >= today; // keep anyone not yet expired, drop the rest
+          });
+        }
         setSubscriptions(prev => prev.map(s => s.id === subId ? updatedSub : s));
         markPendingWrite(subId);
         await updateSubscription(subId, updatedSub);
