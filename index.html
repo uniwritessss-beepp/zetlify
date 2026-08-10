@@ -5370,6 +5370,12 @@
       const [showCreditHistory, setShowCreditHistory] = useState(false);
       const [socialOrders, setSocialOrders] = useState([]);
       const [socialOrdersLoading, setSocialOrdersLoading] = useState(true);
+      // Which subscription "folder" (e.g. Netflix, Amazon Prime) is
+      // currently expanded on the portal — null means the folder grid is
+      // showing and nothing is opened yet. Grouping by subscription name
+      // keeps things calm even when someone has 3-5+ active subscriptions,
+      // instead of dumping every single one full-detail on the page at once.
+      const [expandedFolder, setExpandedFolder] = useState(null);
 
       useEffect(() => {
         if (user) {
@@ -5466,6 +5472,35 @@
         return diff === 0 || diff === 1;
       });
 
+      // Group active entries into per-subscription "folders" (Netflix,
+      // Amazon Prime, etc.) so a customer with several purchases sees a
+      // tidy grid of folders instead of every subscription's full details
+      // stacked one after another. Multiple purchases of the same
+      // subscription (e.g. two Netflix screens) land in the same folder.
+      const subscriptionFolders = useMemo(() => {
+        const map = {};
+        activeEntries.forEach(entry => {
+          const key = entry.subscriptionName || 'Other';
+          if (!map[key]) {
+            const matchingSub = (subscriptions || []).find(s => s.id === entry.subscriptionId);
+            map[key] = { name: key, logo: matchingSub?.logo || '', entries: [] };
+          }
+          map[key].entries.push(entry);
+        });
+        return Object.values(map);
+      }, [activeEntries, subscriptions]);
+
+      const folderStatus = (folder) => {
+        // Worst status among the folder's entries wins, so a folder with
+        // any expiring/expired item inside is flagged even if collapsed.
+        let worst = { label: 'Active', color: 'badge-green' };
+        folder.entries.forEach(entry => {
+          const s = getStatus(entry.expiryDate);
+          if (s.label === 'Expires Today' || s.label === 'Expires Tomorrow') worst = s;
+        });
+        return worst;
+      };
+
       const displayName = customerData && customerData.length > 0 ? customerData[0].name : user?.username || 'User';
       const displayWhatsapp = customerData && customerData.length > 0 ? customerData[0].whatsapp : user?.whatsapp || 'N/A';
 
@@ -5552,60 +5587,102 @@
                 <p className="text-yellow-400 text-sm"><i className="fas fa-exclamation-triangle mr-2"></i> ⚠️ One or more of your subscriptions expire today or tomorrow! Please renew.</p>
               </div>
             )}
-            <div className="space-y-4">
-              {activeEntries.map((entry, idx) => {
-                const status = getStatus(entry.expiryDate);
-                const isExpiring = status.label === 'Expires Today' || status.label === 'Expires Tomorrow';
+            {(() => {
+              // With only one subscription, a folder to click into just adds
+              // an extra tap for no reason — show its details directly.
+              const activeFolder = subscriptionFolders.length === 1 ? subscriptionFolders[0] : subscriptionFolders.find(f => f.name === expandedFolder);
+
+              if (!activeFolder) {
                 return (
-                  <div key={idx} className="bg-red-500/5 rounded-xl p-4 border border-red-500/10">
-                    <div className="flex justify-between items-center mb-2">
-                      <h3 className="text-lg font-semibold text-white">{entry.subscriptionName}</h3>
-                      <span className={`badge ${status.color === 'badge-green' ? 'badge-green' : status.color === 'badge-yellow' ? 'badge-yellow' : status.color === 'badge-red' ? 'badge-red' : 'badge-gray'}`}>{status.label}</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                      <div className="detail-row"><span className="label">Screens</span><span className="value">{entry.screens}</span></div>
-                      <div className="detail-row"><span className="label">Duration</span><span className="value">{entry.months ? entry.months + ' months' : entry.days + ' days'}</span></div>
-                      <div className="detail-row"><span className="label">Expiry</span><span className="value text-yellow-400">{entry.expiryDate}</span></div>
-                      <div className="detail-row"><span className="label">Account Email</span>
-                        <span className="value">{entry.accountEmail}
-                          <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.accountEmail); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
-                        </span>
-                      </div>
-                      <div className="detail-row"><span className="label">Account Password</span>
-                        <span className="value">{entry.accountPassword || '••••••••'}
-                          <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.accountPassword || ''); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
-                        </span>
-                      </div>
-                      {!entry.isCustom && (
-                        <>
-                          <div className="detail-row"><span className="label">Screen Name</span>
-                            <span className="value">{entry.screenName}
-                              <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.screenName); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
-                            </span>
-                          </div>
-                          <div className="detail-row"><span className="label">Screen PIN</span>
-                            <span className="value">{entry.screenPin || 'N/A'}
-                              <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.screenPin || ''); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
-                            </span>
-                          </div>
-                        </>
-                      )}
-                      {entry.email && (
-                        <div className="detail-row"><span className="label">Email</span><span className="value">{entry.email}</span></div>
-                      )}
-                      {entry.notes && (
-                        <div className="detail-row sm:col-span-2"><span className="label">Notes</span><span className="value">{entry.notes}</span></div>
-                      )}
-                    </div>
-                    {isExpiring && (
-                      <div className="mt-2 text-xs text-yellow-400">
-                        <i className="fas fa-clock mr-1"></i> This subscription expires {status.label === 'Expires Today' ? 'today' : 'tomorrow'}!
-                      </div>
-                    )}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {subscriptionFolders.map(folder => {
+                      const fStatus = folderStatus(folder);
+                      const isExpiring = fStatus.label === 'Expires Today' || fStatus.label === 'Expires Tomorrow';
+                      return (
+                        <button
+                          key={folder.name}
+                          onClick={() => setExpandedFolder(folder.name)}
+                          className="relative flex flex-col items-center gap-2 bg-red-500/5 hover:bg-red-500/10 rounded-2xl p-4 border border-red-500/10 hover:border-red-500/30 transition text-center"
+                        >
+                          {isExpiring && <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-yellow-400 animate-pulse"></span>}
+                          {folder.logo ? (
+                            <img src={folder.logo} alt={folder.name} className="w-10 h-10 object-contain rounded-lg" />
+                          ) : (
+                            <i className="fas fa-folder text-3xl text-red-400"></i>
+                          )}
+                          <span className="text-white text-sm font-semibold leading-tight">{folder.name}</span>
+                          <span className="text-white/40 text-xs">{folder.entries.length > 1 ? `${folder.entries.length} screens` : '1 screen'}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 );
-              })}
-            </div>
+              }
+
+              return (
+                <div>
+                  {subscriptionFolders.length > 1 && (
+                    <button onClick={() => setExpandedFolder(null)} className="text-red-400 hover:text-red-300 text-sm font-semibold inline-flex items-center mb-4">
+                      <i className="fas fa-arrow-left mr-2"></i> Back to all subscriptions
+                    </button>
+                  )}
+                  <div className="space-y-4">
+                    {activeFolder.entries.map((entry, idx) => {
+                      const status = getStatus(entry.expiryDate);
+                      const isExpiring = status.label === 'Expires Today' || status.label === 'Expires Tomorrow';
+                      return (
+                        <div key={idx} className="bg-red-500/5 rounded-xl p-4 border border-red-500/10">
+                          <div className="flex justify-between items-center mb-2">
+                            <h3 className="text-lg font-semibold text-white">{entry.subscriptionName}</h3>
+                            <span className={`badge ${status.color === 'badge-green' ? 'badge-green' : status.color === 'badge-yellow' ? 'badge-yellow' : status.color === 'badge-red' ? 'badge-red' : 'badge-gray'}`}>{status.label}</span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                            <div className="detail-row"><span className="label">Screens</span><span className="value">{entry.screens}</span></div>
+                            <div className="detail-row"><span className="label">Duration</span><span className="value">{entry.months ? entry.months + ' months' : entry.days + ' days'}</span></div>
+                            <div className="detail-row"><span className="label">Expiry</span><span className="value text-yellow-400">{entry.expiryDate}</span></div>
+                            <div className="detail-row"><span className="label">Account Email</span>
+                              <span className="value">{entry.accountEmail}
+                                <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.accountEmail); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
+                              </span>
+                            </div>
+                            <div className="detail-row"><span className="label">Account Password</span>
+                              <span className="value">{entry.accountPassword || '••••••••'}
+                                <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.accountPassword || ''); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
+                              </span>
+                            </div>
+                            {!entry.isCustom && (
+                              <>
+                                <div className="detail-row"><span className="label">Screen Name</span>
+                                  <span className="value">{entry.screenName}
+                                    <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.screenName); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
+                                  </span>
+                                </div>
+                                <div className="detail-row"><span className="label">Screen PIN</span>
+                                  <span className="value">{entry.screenPin || 'N/A'}
+                                    <button className="copy-btn" onClick={() => { navigator?.clipboard?.writeText(entry.screenPin || ''); addToast('Copied!', 'success'); }}><i className="fas fa-copy"></i></button>
+                                  </span>
+                                </div>
+                              </>
+                            )}
+                            {entry.email && (
+                              <div className="detail-row"><span className="label">Email</span><span className="value">{entry.email}</span></div>
+                            )}
+                            {entry.notes && (
+                              <div className="detail-row sm:col-span-2"><span className="label">Notes</span><span className="value">{entry.notes}</span></div>
+                            )}
+                          </div>
+                          {isExpiring && (
+                            <div className="mt-2 text-xs text-yellow-400">
+                              <i className="fas fa-clock mr-1"></i> This subscription expires {status.label === 'Expires Today' ? 'today' : 'tomorrow'}!
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       );
