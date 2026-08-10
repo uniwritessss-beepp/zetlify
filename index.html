@@ -6870,9 +6870,9 @@
 
       const [editingAccount, setEditingAccount] = useState(null);
       const [editingScreen, setEditingScreen] = useState(null);
-      const [editAccountForm, setEditAccountForm] = useState({ email: '', password: '' });
+      const [editAccountForm, setEditAccountForm] = useState({ email: '', password: '', purchaseDate: '' });
       const [editScreenForm, setEditScreenForm] = useState({ name: '', pin: '' });
-      const [newAccount, setNewAccount] = useState({ email: '', password: '', screens: [{ name: 'Screen 1', pin: '' }], subscriptionId: '' });
+      const [newAccount, setNewAccount] = useState({ email: '', password: '', screens: [{ name: 'Screen 1', pin: '' }], subscriptionId: '', purchaseDate: new Date().toISOString().split('T')[0] });
 
       // ─── Notification badges (new registrations / new purchases) ──
       // "Seen" timestamps are stored in localStorage so the badge only
@@ -6955,6 +6955,63 @@
         })));
         return count;
       }, [subscriptions]);
+
+      // ─── Cost renewal reminders ──────────────────────────────────
+      // This is about what YOU pay the streaming service for an account
+      // (its purchaseDate + costPerMonth), not a customer's subscription
+      // expiry — a completely separate clock. Each account renews on a
+      // rolling 30-day cycle starting from its purchase date, forever,
+      // until the purchase date is bumped forward (the "Mark Renewed"
+      // button does exactly that, once the real payment is made).
+      const getRenewalInfo = (purchaseDate) => {
+        if (!purchaseDate) return null;
+        const purchase = new Date(purchaseDate);
+        if (isNaN(purchase.getTime())) return null;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        purchase.setHours(0, 0, 0, 0);
+        // Walk forward in 30-day jumps from the purchase date to find the
+        // next due date that hasn't passed yet — handles an account that's
+        // been running for months just as well as one bought yesterday.
+        let dueDate = new Date(purchase);
+        while (dueDate < today) dueDate.setDate(dueDate.getDate() + 30);
+        const daysUntil = Math.round((dueDate - today) / 86400000);
+        return { dueDate, daysUntil };
+      };
+
+      // Every account (across every subscription) that's due to renew
+      // within a day, sorted soonest-first, so the most urgent one is
+      // always at the top of the reminder banner.
+      const renewalReminders = useMemo(() => {
+        const list = [];
+        (subscriptions || []).forEach(sub => (sub.accounts || []).forEach(acc => {
+          const info = getRenewalInfo(acc.purchaseDate);
+          if (info && info.daysUntil <= 1) {
+            list.push({ subId: sub.id, subName: sub.name, costPerMonth: sub.costPerMonth || 0, account: acc, ...info });
+          }
+        }));
+        return list.sort((a, b) => a.daysUntil - b.daysUntil);
+      }, [subscriptions]);
+
+      // "I just paid" — resets this account's 30-day clock to start from
+      // today, the same Save path handleAddAccount already uses.
+      const handleMarkRenewed = async (subId, accountId) => {
+        const sub = subscriptions.find(s => s.id === subId);
+        if (!sub) return;
+        const updatedSub = JSON.parse(JSON.stringify(sub));
+        const acc = updatedSub.accounts.find(a => a.id === accountId);
+        if (!acc) return;
+        acc.purchaseDate = new Date().toISOString().split('T')[0];
+        setSubscriptions(prev => prev.map(s => s.id === subId ? updatedSub : s));
+        try {
+          await updateSubscription(subId, updatedSub);
+          addToast('Marked as renewed — next reminder in 30 days.', 'success');
+          refreshData(true);
+        } catch (err) {
+          setSubscriptions(prev => prev.map(s => s.id === subId ? sub : s));
+          addToast('Failed to save — reverted, please try again', 'error');
+        }
+      };
 
       // ─── Load functions ──────────────────────────────────────────
       const loadOTPs = async () => {
@@ -8271,12 +8328,13 @@
             id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
             customers: []
           })),
+          purchaseDate: newAccount.purchaseDate || new Date().toISOString().split('T')[0],
           createdAt: new Date().toISOString()
         };
         updatedSub.accounts.push(account);
         setSubscriptions(prev => prev.map(s => s.id === subId ? updatedSub : s));
         markPendingWrite(subId);
-        setNewAccount({ email: '', password: '', screens: [{ name: 'Screen 1', pin: '' }], subscriptionId: '' });
+        setNewAccount({ email: '', password: '', screens: [{ name: 'Screen 1', pin: '' }], subscriptionId: '', purchaseDate: new Date().toISOString().split('T')[0] });
         setShowAddAccount(null);
         addToast('Account added!', 'success');
         try {
@@ -8301,9 +8359,9 @@
         setNewAccount(prev => ({ ...prev, screens: updated }));
       };
 
-      const openEditAccount = (subId, accId, email, password) => {
+      const openEditAccount = (subId, accId, email, password, purchaseDate) => {
         setEditingAccount({ subId, accId });
-        setEditAccountForm({ email, password });
+        setEditAccountForm({ email, password, purchaseDate: purchaseDate || '' });
       };
 
       const openEditScreen = (subId, accId, screenId, name, pin) => {
@@ -8313,7 +8371,7 @@
 
       const saveAccountEdit = async () => {
         const { subId, accId } = editingAccount;
-        const { email, password } = editAccountForm;
+        const { email, password, purchaseDate } = editAccountForm;
         const sub = subscriptions.find(s => s.id === subId);
         if (!sub) return;
         const updatedSub = JSON.parse(JSON.stringify(sub));
@@ -8321,6 +8379,7 @@
         if (!acc) return;
         acc.email = email;
         acc.password = password;
+        acc.purchaseDate = purchaseDate || acc.purchaseDate;
         setSubscriptions(prev => prev.map(s => s.id === subId ? updatedSub : s));
         markPendingWrite(subId);
         setEditingAccount(null);
@@ -8626,6 +8685,39 @@
             </div>
           )}
 
+          {/* Cost renewal reminders — what YOU owe the streaming service for
+              an account, not a customer's subscription. Shown above every
+              tab so it's seen the moment something's due, no matter where
+              admin lands after logging in. */}
+          {renewalReminders.length > 0 && (
+            <div className="glass-panel border border-amber-500/30 bg-amber-500/5">
+              <h4 className="text-amber-300 font-semibold mb-3 flex items-center gap-2">
+                <i className="fas fa-bell"></i> {renewalReminders.length} account{renewalReminders.length === 1 ? '' : 's'} due for renewal
+              </h4>
+              <div className="space-y-2">
+                {renewalReminders.map(r => (
+                  <div key={r.account.id} className="flex flex-wrap items-center justify-between gap-3 bg-black/20 rounded-lg px-3 py-2">
+                    <div className="text-sm">
+                      <span className="text-white font-medium">{r.subName}</span>
+                      <span className="text-white/40"> — {r.account.email}</span>
+                      {r.costPerMonth > 0 && <span className="text-white/40"> — RS {r.costPerMonth}/mo</span>}
+                      <div className={`text-xs mt-0.5 ${r.daysUntil < 0 ? 'text-red-400' : 'text-amber-400'}`}>
+                        {r.daysUntil < 0
+                          ? `Overdue by ${Math.abs(r.daysUntil)} day${Math.abs(r.daysUntil) === 1 ? '' : 's'} — pay this now`
+                          : r.daysUntil === 0
+                          ? 'Due today'
+                          : 'Due tomorrow'}
+                      </div>
+                    </div>
+                    <button onClick={() => handleMarkRenewed(r.subId, r.account.id)} className="btn-neon text-xs whitespace-nowrap">
+                      <i className="fas fa-check mr-1"></i> Mark Renewed
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2 border-b border-white/5 pb-3">
             {['overview', 'search', 'subscriptions', 'grid', 'customers', 'waiting', 'income', 'users', 'deals', 'promotions', 'faqs', 'otp', 'broadcast', 'social', 'theme'].map(tab => (
               <button key={tab} onClick={() => {
@@ -8867,7 +8959,7 @@
                                     <td className="text-sm"><span className="badge badge-red-light"><i className="fas fa-circle text-[6px] mr-1 align-middle"></i> Active</span></td>
                                     <td>
                                       <div className="flex gap-1 flex-wrap">
-                                        <button onClick={() => openEditAccount(sub.id, acc.id, acc.email, acc.password)} className="btn-warning text-xs"><i className="fas fa-edit"></i></button>
+                                        <button onClick={() => openEditAccount(sub.id, acc.id, acc.email, acc.password, acc.purchaseDate)} className="btn-warning text-xs"><i className="fas fa-edit"></i></button>
                                         <button onClick={() => handleGeneratePassword(sub.id, acc.id)} className="btn-red text-xs"><i className="fas fa-key"></i> Gen Pass</button>
                                         <button onClick={() => deleteAccount(sub.id, acc.id)} className="btn-danger text-xs"><i className="fas fa-trash"></i></button>
                                       </div>
@@ -8908,6 +9000,10 @@
                           <div><label className="text-white/40 text-xs">Password</label><input type="text" value={newAccount.password} onChange={(e) => setNewAccount({ ...newAccount, password: e.target.value })} className="input-neon mt-1" placeholder="••••••••" /></div>
                         </div>
                         <div className="mt-3">
+                          <label className="text-white/40 text-xs">Purchase Date <span className="text-white/25">(when you paid for this account — used to remind you 1 day before it's due to renew, every 30 days)</span></label>
+                          <input type="date" value={newAccount.purchaseDate} onChange={(e) => setNewAccount({ ...newAccount, purchaseDate: e.target.value })} className="input-neon mt-1" max={new Date().toISOString().split('T')[0]} />
+                        </div>
+                        <div className="mt-3">
                           <p className="text-white/40 text-xs mb-2">Screens (Slots)</p>
                           <div className="space-y-2">
                             {newAccount.screens.map((s, idx) => (
@@ -8921,7 +9017,7 @@
                         </div>
                         <div className="flex gap-3 mt-4">
                           <button onClick={() => handleAddAccount(sub.id)} className="btn-neon text-sm"><i className="fas fa-check mr-2"></i> Save</button>
-                          <button onClick={() => { setShowAddAccount(null); setNewAccount({ email: '', password: '', screens: [{ name: 'Screen 1', pin: '' }], subscriptionId: '' }); }} className="btn-neon-outline text-sm">Cancel</button>
+                          <button onClick={() => { setShowAddAccount(null); setNewAccount({ email: '', password: '', screens: [{ name: 'Screen 1', pin: '' }], subscriptionId: '', purchaseDate: new Date().toISOString().split('T')[0] }); }} className="btn-neon-outline text-sm">Cancel</button>
                         </div>
                       </div>
                     )}
@@ -10247,6 +10343,7 @@
                 <div className="space-y-4">
                   <div><label className="text-white/50 text-sm">Email</label><input type="text" value={editAccountForm.email} onChange={(e) => setEditAccountForm({ ...editAccountForm, email: e.target.value })} className="input-neon mt-1" /></div>
                   <div><label className="text-white/50 text-sm">Password</label><input type="text" value={editAccountForm.password} onChange={(e) => setEditAccountForm({ ...editAccountForm, password: e.target.value })} className="input-neon mt-1" /></div>
+                  <div><label className="text-white/50 text-sm">Purchase Date <span className="text-white/30">(for renewal reminders)</span></label><input type="date" value={editAccountForm.purchaseDate} onChange={(e) => setEditAccountForm({ ...editAccountForm, purchaseDate: e.target.value })} className="input-neon mt-1" max={new Date().toISOString().split('T')[0]} /></div>
                 </div>
                 <div className="flex gap-3 mt-6">
                   <button onClick={saveAccountEdit} className="btn-neon">Save</button>
