@@ -2450,7 +2450,7 @@ app.get('/api/income', requireAdmin, async (req, res) => {
       startDate.setDate(startDate.getDate() - 60);
     } else if (period === '90') {
       startDate.setDate(startDate.getDate() - 90);
-    } else if ((period === 'custom' || period === 'month') && customStart) {
+    } else if (period === 'custom' && customStart) {
       startDate = new Date(customStart);
       startDate.setHours(0, 0, 0, 0);
       endDate = customEnd ? new Date(customEnd) : now;
@@ -2482,25 +2482,17 @@ app.get('/api/income', requireAdmin, async (req, res) => {
       // many customers you've put on it or which reporting period is
       // selected. Adding another customer to an existing account must NOT
       // increase this; only adding another account does.
-      //
-      // For a historical period, only count an account if it actually
-      // existed by the end of that period — otherwise looking at, say,
-      // January's report would wrongly include the cost of an account you
-      // only added in August. Accounts created before this field existed
-      // have no createdAt at all, so they're always counted (no way to
-      // know when they started, and excluding them would under-report).
-      const accountsInPeriod = sub.accounts.filter(a => !a.createdAt || new Date(a.createdAt) <= endDate);
-      const accountsCost = accountsInPeriod.length * costPerMonth;
+      const accountsCost = sub.accounts.length * costPerMonth;
       totalCost += accountsCost;
       costByType[subType] = (costByType[subType] || 0) + accountsCost;
       subscriptionBreakdown.push({
         subscriptionId: sub.id,
         name: sub.name,
         type: subType,
-        accountsCount: accountsInPeriod.length,
+        accountsCount: sub.accounts.length,
         costPerAccount: costPerMonth,
         totalCost: accountsCost,
-        accountEmails: accountsInPeriod.map(a => a.email).filter(Boolean)
+        accountEmails: sub.accounts.map(a => a.email).filter(Boolean)
       });
 
       sub.accounts.forEach(acc => {
@@ -2510,12 +2502,8 @@ app.get('/api/income', requireAdmin, async (req, res) => {
               const expiryDate = c.expiryDate ? new Date(c.expiryDate) : null;
               const purchaseDate = c.purchasedAt ? new Date(c.purchasedAt) : null;
 
-              // NOTE: whether the subscription has since expired is
-              // irrelevant here — a month's income is counted by when the
-              // payment actually happened, not by whether that customer's
-              // access is still active today. (Checking last month's
-              // income next month would otherwise wrongly show RS 0 for
-              // every customer whose 1-month plan has since ended.)
+              if (expiryDate && expiryDate < now) return;
+
               if (purchaseDate && (purchaseDate < startDate || purchaseDate > endDate)) return;
               if (!purchaseDate) {
                 const months = c.months || 1;
@@ -2549,21 +2537,19 @@ app.get('/api/income', requireAdmin, async (req, res) => {
 
     // Custom grants (manually-fulfilled, out-of-catalog subscriptions) count
     // toward income the same way a regular customer purchase does — cost is
-    // a flat recurring amount for as long as it's active (and, same as
-    // above, only counted for a historical period if it had already been
-    // granted by the end of that period), revenue is what the customer was
-    // actually charged, counted only if the grant was made within the
-    // selected period regardless of whether it's since expired.
+    // a flat recurring amount for as long as it's active, revenue is what
+    // the customer was actually charged, counted only if the grant was made
+    // within the selected period.
     const customGrants = await customGrantsCollection.find({}).toArray();
     customGrants.forEach(g => {
+      const expiryDate = g.expiryDate ? new Date(g.expiryDate) : null;
+      if (expiryDate && expiryDate < now) return; // expired — no longer an active cost
+
+      const cost = g.costPerMonth || 0;
+      totalCost += cost;
+      costByType['custom'] = (costByType['custom'] || 0) + cost;
+
       const purchaseDate = g.purchasedAt ? new Date(g.purchasedAt) : null;
-
-      if (!purchaseDate || purchaseDate <= endDate) {
-        const cost = g.costPerMonth || 0;
-        totalCost += cost;
-        costByType['custom'] = (costByType['custom'] || 0) + cost;
-      }
-
       if (purchaseDate && (purchaseDate < startDate || purchaseDate > endDate)) return;
 
       const revenue = (g.sellingPrice || 0) * (g.months || 1);
