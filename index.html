@@ -8618,7 +8618,6 @@
               <button onClick={onBack} className="btn-neon-outline text-sm"><i className="fas fa-arrow-left mr-2"></i> Back</button>
               <button onClick={refreshData} className="btn-red text-sm"><i className="fas fa-sync mr-1"></i> Refresh</button>
               <button onClick={() => setShowAdminSettings(!showAdminSettings)} className="btn-warning text-sm"><i className="fas fa-cog mr-1"></i> Settings</button>
-              <button onClick={() => { setShowEditSub(null); resetAddForm(); setShowAddSub(true); }} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> Add Subscription</button>
               <button onClick={onLogout} className="btn-neon-outline text-sm"><i className="fas fa-sign-out-alt mr-2"></i> Logout</button>
             </div>
           </div>
@@ -8983,6 +8982,9 @@
 
           {activeTab === 'subscriptions' && (
             <div className="space-y-6">
+              <div className="flex justify-end">
+                <button onClick={() => { setShowEditSub(null); resetAddForm(); setShowAddSub(true); }} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> Add Subscription</button>
+              </div>
               {subscriptions.map(sub => {
                 const totalCust = getTotalCustomers(sub);
                 const totalSlots = getTotalSlots(sub);
