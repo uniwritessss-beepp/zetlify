@@ -1610,8 +1610,85 @@
     }
 
     // ─── NAVBAR ──────────────────────────────────────────────
+    // ─── ADD CREDITS (manual bank/wallet transfer) ────────────────
+    // Clicking the credits badge in the navbar opens this: payment account
+    // details, then a small form (amount sent, transaction ID, sender's
+    // account name) that — on "Added" — opens WhatsApp with all of that
+    // pre-filled so the admin can verify the receipt and top up credits.
+    const CREDIT_PAYMENT_ACCOUNTS = [
+      { label: 'Jazzcash', number: '03079163485', name: 'Mashhood Ali' },
+      { label: 'Easypaisa', number: '03071078212', name: 'Mutahhar ali' },
+      { label: 'Sada Pay', number: '03071078212', name: 'Mutahhar ali' },
+      { label: 'Naya pay', number: '03071078212', name: 'Mutahhar ali' },
+      { label: 'Mashreq Pakistan IBAN', number: 'PK64MSHQ0000089200138380', name: 'Mutahhar Ali' },
+    ];
+
+    function AddCreditsModal({ open, onClose, user }) {
+      const { addToast } = useContext(AppContext);
+      const [amount, setAmount] = useState('');
+      const [tid, setTid] = useState('');
+      const [accountName, setAccountName] = useState('');
+
+      useEffect(() => {
+        if (open) { setAmount(''); setTid(''); setAccountName(''); }
+      }, [open]);
+
+      if (!open) return null;
+
+      const handleAdded = () => {
+        if (!amount.trim() || !tid.trim() || !accountName.trim()) {
+          addToast('Please fill in the amount, transaction ID, and the account name you paid from.', 'error');
+          return;
+        }
+        const message = `Hi, I've sent a payment to add credits.\n\nUsername: ${user?.username || 'N/A'}\nAccount Name (sent from): ${accountName.trim()}\nTransaction ID (TID): ${tid.trim()}\nAmount Sent: RS ${amount.trim()}\n\n(Receipt screenshot attached)`;
+        window.open(`${ADMIN_WHATSAPP}?text=${encodeURIComponent(message)}`, '_blank');
+        onClose();
+      };
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal-content glass-panel" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl font-bold text-white mb-1"><i className="fas fa-coins text-red-400 mr-2"></i> Add Credits</h3>
+            <p className="text-white/40 text-sm mb-4">Send your payment to any account below, fill in the details, then tap "Added" — it'll open WhatsApp with everything filled in so we can confirm and top up your credits.</p>
+
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 space-y-2">
+              {CREDIT_PAYMENT_ACCOUNTS.map(acc => (
+                <div key={acc.label} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-white/50 whitespace-nowrap">{acc.label}</span>
+                  <span className="text-white font-medium text-right">{acc.number} <span className="text-white/30">({acc.name})</span></span>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-yellow-500/10 border border-yellow-500/25 rounded-xl p-3 mb-4 text-yellow-300 text-xs">
+              <i className="fas fa-exclamation-triangle mr-1"></i> Important: Send a receipt screenshot on WhatsApp after payment — otherwise it won't be considered.
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-white/50 text-sm font-medium">Amount Sent</label>
+                <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ''))} className="input-neon mt-1" placeholder="e.g. 500" />
+              </div>
+              <div>
+                <label className="text-white/50 text-sm font-medium">Transaction ID (TID)</label>
+                <input type="text" value={tid} onChange={(e) => setTid(e.target.value)} className="input-neon mt-1" placeholder="TID from your payment app" />
+              </div>
+              <div>
+                <label className="text-white/50 text-sm font-medium">Account Name (who you sent from)</label>
+                <input type="text" value={accountName} onChange={(e) => setAccountName(e.target.value)} className="input-neon mt-1" placeholder="Name on the sending account" />
+              </div>
+            </div>
+
+            <button onClick={handleAdded} className="btn-neon w-full py-3 mt-5"><i className="fab fa-whatsapp mr-2"></i> Added</button>
+            <button onClick={onClose} className="btn-neon-outline w-full mt-2">Cancel</button>
+          </div>
+        </div>
+      );
+    }
+
     function Navbar({ activeTab, setActiveTab, showSubscriptions, setShowSubscriptions, onCustomerPortal, onLogout, onOpenComplaint }) {
       const [mobileOpen, setMobileOpen] = useState(false);
+      const [showAddCredits, setShowAddCredits] = useState(false);
       const { user } = useContext(UserContext);
 
       // Notification badge for the customer: shows how many purchases they
@@ -1667,9 +1744,9 @@
                 ))}
                 {user ? (
                   <>
-                    <span className="text-red-400 text-sm font-medium mr-2 bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">
+                    <button onClick={() => setShowAddCredits(true)} className="text-red-400 text-sm font-medium mr-2 bg-red-500/10 hover:bg-red-500/20 px-3 py-1 rounded-full border border-red-500/20 transition" title="Add credits">
                       <i className="fas fa-coins mr-1"></i> RS {user.credits || 0}
-                    </span>
+                    </button>
                     <button onClick={handleCustomerPortalClick} className="nav-link active">
                       <i className="fas fa-user-circle mr-2"></i> Customer Portal ➜
                       {unseenPurchases > 0 && <span className="notif-badge">{unseenPurchases}</span>}
@@ -1696,9 +1773,9 @@
               </div>
               <div className="flex items-center gap-3">
                 {user && (
-                  <span className="md:hidden text-red-400 text-sm font-medium bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">
+                  <button onClick={() => setShowAddCredits(true)} className="md:hidden text-red-400 text-sm font-medium bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20" title="Add credits">
                     <i className="fas fa-coins mr-1"></i> RS {user.credits || 0}
-                  </span>
+                  </button>
                 )}
                 {!user && (
                   <button onClick={onCustomerPortal} className="md:hidden nav-link active whitespace-nowrap">
@@ -1739,6 +1816,7 @@
               </div>
             )}
           </nav>
+          <AddCreditsModal open={showAddCredits} onClose={() => setShowAddCredits(false)} user={user} />
         </>
       );
     }
@@ -6970,11 +7048,14 @@
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         purchase.setHours(0, 0, 0, 0);
-        // Walk forward in 30-day jumps from the purchase date to find the
-        // next due date that hasn't passed yet — handles an account that's
-        // been running for months just as well as one bought yesterday.
-        let dueDate = new Date(purchase);
-        while (dueDate < today) dueDate.setDate(dueDate.getDate() + 30);
+        // Due date is simply purchase + 30 days — it does NOT keep jumping
+        // forward once that date passes. If it jumped forward every render,
+        // an overdue/ignored renewal would silently vanish from the
+        // reminder list on its own; instead it should stay put (showing
+        // "Overdue by N days") until the admin explicitly clicks Mark
+        // Renewed, which is the only thing that resets the clock.
+        const dueDate = new Date(purchase);
+        dueDate.setDate(dueDate.getDate() + 30);
         const daysUntil = Math.round((dueDate - today) / 86400000);
         return { dueDate, daysUntil };
       };

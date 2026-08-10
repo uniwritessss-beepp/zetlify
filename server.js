@@ -2,13 +2,8 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { MongoClient } = require('mongodb');
-const path = require('path');
-const app = express();
 
-// Render (and most hosts) inject the port to listen on via process.env.PORT
-// — this was missing entirely, which is why the server crashed on startup
-// with "PORT is not defined" the moment it reached app.listen below.
-const PORT = process.env.PORT || 3000;
+const app = express();
 
 // ─── CORS CONFIGURATION ──────────────────────────────────────
 app.use(cors({
@@ -29,16 +24,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── SERVE STATIC FRONTEND (FIX FOR "Cannot GET /") ──────────
-// Serve static files (like index.html, CSS, JS) from the current directory
-app.use(express.static(__dirname));
-
-// Explicitly serve index.html at the root route
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-// ─── END STATIC SERVE ─────────────────────────────────────────
-
 // ─── MongoDB connection ──────────────────────────────────────
 const MONGODB_URI = 'mongodb+srv://elitecinezo_db_user:g485P3ELoeP8REkD@cluster0.tsw1i0i.mongodb.net/subscription_hub?retryWrites=true&w=majority';
 const DB_NAME = 'subscription_hub';
@@ -58,7 +43,7 @@ let adminSettingsCollection;
 let noticesCollection;
 let socialServicesCollection;
 let socialOrdersCollection;
-let socialCartCollection;
+let cartCollection;
 
 // ─── SUBSCRIPTION COSTS (Monthly) ──────────────────────────
 const SUBSCRIPTION_COSTS = {
@@ -95,43 +80,10 @@ async function connectDB() {
   noticesCollection = db.collection('notices');
   socialServicesCollection = db.collection('socialServices');
   socialOrdersCollection = db.collection('socialOrders');
-  socialCartCollection = db.collection('socialCart');
+  cartCollection = db.collection('cart');
   await ensureAuthSecret(); // load or create the server-only token-signing secret
   await ensureCredKey(); // load or create the server-only customer-password encryption key
-  await ensureIndexes(); // speed up the lookups login/signup/purchase depend on
   console.log('✅ Connected to MongoDB');
-}
-
-// ─── Indexes ──────────────────────────────────────────────────────
-// Without these, every lookup by username, whatsapp number, or a document's
-// custom `id` field (subscriptions, deals, promotions, social services,
-// waiting-list entries, OTPs) had to scan every document in the collection
-// to find its match — that full scan is exactly what made login, signup,
-// and purchase (which allocates a screen by subscription id, then re-reads
-// it) feel slow, and it only gets slower as the collections grow. None of
-// these change what a query returns, only how fast MongoDB finds it.
-// Index creation is idempotent (createIndex on an index that already
-// exists is a no-op) and safe to re-run on every server start. Any single
-// failure is logged rather than crashing startup — a slow query is far
-// better than a server that won't boot.
-async function ensureIndexes() {
-  const jobs = [
-    usersCollection.createIndex({ username: 1 }),
-    usersCollection.createIndex({ whatsapp: 1 }),
-    subscriptionsCollection.createIndex({ id: 1 }),
-    dealsCollection.createIndex({ id: 1 }),
-    promotionsCollection.createIndex({ id: 1 }),
-    socialServicesCollection.createIndex({ id: 1 }),
-    waitingCollection.createIndex({ id: 1 }),
-    customGrantsCollection.createIndex({ id: 1 }),
-    customGrantsCollection.createIndex({ username: 1 }),
-    otpsCollection.createIndex({ otp: 1 }),
-    creditHistoryCollection.createIndex({ username: 1, createdAt: -1 }),
-  ];
-  const results = await Promise.allSettled(jobs);
-  results.forEach(r => {
-    if (r.status === 'rejected') console.error('⚠️ Index creation failed (continuing anyway):', r.reason?.message || r.reason);
-  });
 }
 
 // ─── Idempotency guard ──────────────────────────────────────
@@ -160,40 +112,6 @@ async function claimIdempotencyKey(key) {
 // browser's localStorage, so changing the admin password from one device
 // takes effect for every device, not just the one that made the change.
 const ADMIN_SETTINGS_ID = 'main';
-
-// ─── Netflix tiered pricing (screens × duration) ────────────
-// Mirrors the identically-named calculation in the client (index.html) —
-// see the comment there for the full explanation of how the two admin-set
-// tables (per screen-count, per duration) combine. This copy is what
-// actually authorizes the charge, so it must stay in sync with the client's
-// version; the client version exists only to show the price before purchase.
-function getNetflixPriceServer(sub, screens, months) {
-  const basePrice = Number(sub?.sellingPrice) || 0;
-  const screenCount = Number(screens) || 1;
-  const totalMonths = Number(months) || 1;
-  const screenTable = (sub?.netflixPricing && sub.netflixPricing.screens) || {};
-  const monthTable = (sub?.netflixPricing && sub.netflixPricing.months) || {};
-
-  const screenPrice = screenTable[screenCount] != null
-    ? Number(screenTable[screenCount])
-    : basePrice * screenCount;
-
-  let monthPrice;
-  if (monthTable[totalMonths] != null) {
-    monthPrice = Number(monthTable[totalMonths]);
-  } else if (totalMonths > 12 && Object.keys(monthTable).length) {
-    const enteredMonths = Object.keys(monthTable).map(Number).sort((a, b) => a - b);
-    const last = enteredMonths[enteredMonths.length - 1];
-    const prev = enteredMonths[enteredMonths.length - 2];
-    const step = prev != null ? (Number(monthTable[last]) - Number(monthTable[prev])) / (last - prev) : basePrice;
-    monthPrice = Number(monthTable[last]) + step * (totalMonths - last);
-  } else {
-    monthPrice = basePrice * totalMonths;
-  }
-
-  if (!basePrice) return Math.round(screenPrice + monthPrice - basePrice);
-  return Math.round((screenPrice * monthPrice) / basePrice);
-}
 
 // Remove sensitive fields before sending a user document to the browser.
 // The password must never leave the server in a response — the client has
@@ -483,7 +401,7 @@ app.put('/api/admin/settings', async (req, res) => {
     if (recoveryNumber !== undefined) update.recoveryNumber = recoveryNumber;
     // Only ever store a theme id we actually ship — an unrecognized value
     // here would otherwise silently break every visitor's page.
-    const VALID_THEMES = ['classic', 'spiderman', 'pakistan'];
+    const VALID_THEMES = ['classic', 'spiderman'];
     if (theme !== undefined) {
       if (!VALID_THEMES.includes(theme)) {
         return res.status(400).json({ error: 'Unknown theme' });
@@ -1105,17 +1023,13 @@ app.post('/api/users/signup', async (req, res) => {
     if (password === username) {
       return res.status(400).json({ error: 'Password must be different from username' });
     }
-    // Both checks are independent — running them together instead of one
-    // after another halves the wait for this step.
-    const [existing, existingWhatsapp] = await Promise.all([
-      usersCollection.findOne({ username }),
-      usersCollection.findOne({ whatsapp })
-    ]);
+    const existing = await usersCollection.findOne({ username });
     if (existing) {
       return res.status(400).json({ error: 'Username already exists' });
     }
     // One account per WhatsApp number — without this, the same person
     // could keep creating fresh accounts indefinitely.
+    const existingWhatsapp = await usersCollection.findOne({ whatsapp });
     if (existingWhatsapp) {
       return res.status(400).json({ error: 'An account with this WhatsApp number already exists' });
     }
@@ -1285,29 +1199,25 @@ app.get('/api/users/:username/credit-history', async (req, res) => {
 // balance.
 app.post('/api/users/:username/deductCredits', async (req, res) => {
   try {
-    let { amount, purchaseId, reason, subscriptionId, months, screens, dealId } = req.body;
+    let { amount, purchaseId, reason, subscriptionId, months, dealId } = req.body;
 
     // For a real purchase, never trust the credit amount the browser sends —
     // always recompute it here from the subscription's (or deal's) actual
     // current price in the database. The client only sends subscriptionId/
-    // months/screens (or dealId) to identify WHAT was bought; the server
-    // decides WHAT IT COSTS. This closes two problems at once: a customer's
-    // browser showing a stale/out-of-date price (e.g. after the admin
-    // changes it) can no longer result in under-charging, and nobody can
-    // tamper with the request to pay less than the real price.
+    // months (or dealId) to identify WHAT was bought; the server decides
+    // WHAT IT COSTS. This closes two problems at once: a customer's browser
+    // showing a stale/out-of-date price (e.g. after the admin changes it)
+    // can no longer result in under-charging, and nobody can tamper with
+    // the request to pay less than the real price.
     // Admin's manual credit adjustments (add/deduct from the Users tab)
     // pass neither subscriptionId nor dealId, so they keep using the raw
     // `amount` exactly as before.
     if (subscriptionId) {
       const sub = await subscriptionsCollection.findOne({ id: subscriptionId });
       if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+      const perMonth = Number(sub.sellingPrice) || 0;
       const totalMonths = Number(months) || 1;
-      if (sub.type === 'netflix' && screens != null) {
-        amount = getNetflixPriceServer(sub, screens, totalMonths);
-      } else {
-        const perMonth = Number(sub.sellingPrice) || 0;
-        amount = Math.round(perMonth * totalMonths);
-      }
+      amount = Math.round(perMonth * totalMonths);
     } else if (dealId) {
       const deal = await dealsCollection.findOne({ id: dealId });
       if (!deal) return res.status(404).json({ error: 'Deal not found' });
@@ -1585,7 +1495,7 @@ app.delete('/api/social-services/:id', requireAdmin, async (req, res) => {
 // can send the order.
 app.post('/api/social-services/:id/services', requireAdmin, async (req, res) => {
   try {
-    const { name, costPrice, sellingPrice, requiredFields, variations } = req.body;
+    const { name, costPrice, sellingPrice, requiredFields } = req.body;
     if (!name) return res.status(400).json({ error: 'Service name is required' });
     const platform = await socialServicesCollection.findOne({ id: req.params.id });
     if (!platform) return res.status(404).json({ error: 'Platform not found' });
@@ -1595,17 +1505,6 @@ app.post('/api/social-services/:id/services', requireAdmin, async (req, res) => 
       costPrice: costPrice || 0,
       sellingPrice: sellingPrice || 0,
       requiredFields: Array.isArray(requiredFields) ? requiredFields.filter(f => ['accountLink', 'videoLink'].includes(f)) : [],
-      // Optional sub-types of this service (e.g. Lifetime Warranty, Non-Refill,
-      // 6 Months Warranty), each with its own per-1000 price. Empty = the
-      // service just uses the base cost/selling price above.
-      variations: Array.isArray(variations) ? variations
-        .filter(v => v && String(v.name || '').trim())
-        .map(v => ({
-          id: v.id ? String(v.id) : Date.now().toString() + Math.random().toString(36).slice(2, 7),
-          name: String(v.name).trim(),
-          costPrice: Number(v.costPrice) || 0,
-          sellingPrice: Number(v.sellingPrice) || 0
-        })) : [],
       active: true
     };
     await socialServicesCollection.updateOne({ id: req.params.id }, { $push: { services: service } });
@@ -1618,7 +1517,7 @@ app.post('/api/social-services/:id/services', requireAdmin, async (req, res) => 
 
 app.put('/api/social-services/:id/services/:serviceId', requireAdmin, async (req, res) => {
   try {
-    const { name, costPrice, sellingPrice, requiredFields, active, variations } = req.body;
+    const { name, costPrice, sellingPrice, requiredFields, active } = req.body;
     const platform = await socialServicesCollection.findOne({ id: req.params.id });
     if (!platform) return res.status(404).json({ error: 'Platform not found' });
     const services = (platform.services || []).map(s => {
@@ -1629,14 +1528,6 @@ app.put('/api/social-services/:id/services/:serviceId', requireAdmin, async (req
         costPrice: costPrice !== undefined ? costPrice : s.costPrice,
         sellingPrice: sellingPrice !== undefined ? sellingPrice : s.sellingPrice,
         requiredFields: requiredFields !== undefined ? requiredFields.filter(f => ['accountLink', 'videoLink'].includes(f)) : s.requiredFields,
-        variations: variations !== undefined ? (Array.isArray(variations) ? variations
-          .filter(v => v && String(v.name || '').trim())
-          .map(v => ({
-            id: v.id ? String(v.id) : Date.now().toString() + Math.random().toString(36).slice(2, 7),
-            name: String(v.name).trim(),
-            costPrice: Number(v.costPrice) || 0,
-            sellingPrice: Number(v.sellingPrice) || 0
-          })) : []) : (s.variations || []),
         active: active !== undefined ? active : s.active
       };
     });
@@ -1661,6 +1552,81 @@ app.delete('/api/social-services/:id/services/:serviceId', requireAdmin, async (
   }
 });
 
+// A service can optionally have "variations" — sub-types the customer
+// picks after choosing the service itself (e.g. a Followers service might
+// offer Lifetime Warranty / Non-Refill / 6 Month Warranty variations, each
+// with its own price and required link). Services with no variations keep
+// working exactly as before, priced and ordered directly.
+app.post('/api/social-services/:id/services/:serviceId/variations', requireAdmin, async (req, res) => {
+  try {
+    const { name, costPrice, sellingPrice, requiredFields } = req.body;
+    if (!name) return res.status(400).json({ error: 'Variation name is required' });
+    const platform = await socialServicesCollection.findOne({ id: req.params.id });
+    if (!platform) return res.status(404).json({ error: 'Platform not found' });
+    const service = (platform.services || []).find(s => s.id === req.params.serviceId);
+    if (!service) return res.status(404).json({ error: 'Service not found' });
+    const variation = {
+      id: Date.now().toString(),
+      name,
+      costPrice: costPrice || 0,
+      sellingPrice: sellingPrice || 0,
+      requiredFields: Array.isArray(requiredFields) ? requiredFields.filter(f => ['accountLink', 'videoLink'].includes(f)) : [],
+      active: true
+    };
+    const services = platform.services.map(s => s.id === req.params.serviceId
+      ? { ...s, variations: [...(s.variations || []), variation] }
+      : s);
+    await socialServicesCollection.updateOne({ id: req.params.id }, { $set: { services } });
+    const updated = await socialServicesCollection.findOne({ id: req.params.id });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/social-services/:id/services/:serviceId/variations/:variationId', requireAdmin, async (req, res) => {
+  try {
+    const { name, costPrice, sellingPrice, requiredFields, active } = req.body;
+    const platform = await socialServicesCollection.findOne({ id: req.params.id });
+    if (!platform) return res.status(404).json({ error: 'Platform not found' });
+    const services = (platform.services || []).map(s => {
+      if (s.id !== req.params.serviceId) return s;
+      const variations = (s.variations || []).map(v => {
+        if (v.id !== req.params.variationId) return v;
+        return {
+          ...v,
+          name: name !== undefined ? name : v.name,
+          costPrice: costPrice !== undefined ? costPrice : v.costPrice,
+          sellingPrice: sellingPrice !== undefined ? sellingPrice : v.sellingPrice,
+          requiredFields: requiredFields !== undefined ? requiredFields.filter(f => ['accountLink', 'videoLink'].includes(f)) : v.requiredFields,
+          active: active !== undefined ? active : v.active
+        };
+      });
+      return { ...s, variations };
+    });
+    await socialServicesCollection.updateOne({ id: req.params.id }, { $set: { services } });
+    const updated = await socialServicesCollection.findOne({ id: req.params.id });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/social-services/:id/services/:serviceId/variations/:variationId', requireAdmin, async (req, res) => {
+  try {
+    const platform = await socialServicesCollection.findOne({ id: req.params.id });
+    if (!platform) return res.status(404).json({ error: 'Platform not found' });
+    const services = (platform.services || []).map(s => s.id === req.params.serviceId
+      ? { ...s, variations: (s.variations || []).filter(v => v.id !== req.params.variationId) }
+      : s);
+    await socialServicesCollection.updateOne({ id: req.params.id }, { $set: { services } });
+    const updated = await socialServicesCollection.findOne({ id: req.params.id });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── SOCIAL MEDIA ORDERS ──────────────────────────────────────
 // Customers don't need an account to order — same as the rest of the
 // site's WhatsApp-driven flow, this just also keeps a record the admin
@@ -1676,7 +1642,7 @@ app.get('/api/social-orders', requireAdmin, async (req, res) => {
 
 app.post('/api/social-orders', async (req, res) => {
   try {
-    const { platformId, platformName, serviceId, serviceName, variationId, variationName, quantity, accountLink, videoLink, name, username, whatsapp, price, dealId } = req.body;
+    const { platformId, platformName, serviceId, serviceName, quantity, accountLink, videoLink, name, whatsapp, price, dealId, username } = req.body;
     if (!platformName || !serviceName || !quantity || !whatsapp) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -1686,8 +1652,6 @@ app.post('/api/social-orders', async (req, res) => {
       platformName,
       serviceId: serviceId || '',
       serviceName,
-      variationId: variationId || '',
-      variationName: variationName || '',
       quantity: Number(quantity) || 0,
       accountLink: accountLink || '',
       videoLink: videoLink || '',
@@ -1701,6 +1665,18 @@ app.post('/api/social-orders', async (req, res) => {
     };
     await socialOrdersCollection.insertOne(order);
     res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// A logged-in customer's own order history — both "in process" (pending)
+// and "successfully purchased" (completed) social media orders — shown in
+// their Cart / My Orders tab.
+app.get('/api/social-orders/user/:username', async (req, res) => {
+  try {
+    const orders = await socialOrdersCollection.find({ username: req.params.username }).sort({ createdAt: -1 }).toArray();
+    res.json(orders);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1730,137 +1706,90 @@ app.delete('/api/social-orders/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// A customer's own order history for their dashboard — scoped to their
-// username, and only they (or the admin) may read it, since orders carry
-// account/video links and WhatsApp numbers.
-app.get('/api/social-orders/user/:username', async (req, res) => {
-  try {
-    const auth = getAuth(req);
-    if (!auth || (auth.r !== 'admin' && auth.u !== req.params.username)) {
-      return res.status(403).json({ error: 'Not authorized to view this account' });
-    }
-    const orders = await socialOrdersCollection.find({ username: req.params.username }).sort({ createdAt: -1 }).toArray();
-    res.json(orders);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// ─── SOCIAL MEDIA CART ─────────────────────────────────────────
+// A social media service on its own is often cheaper than our Rs 300
+// minimum order amount, so customers add services to a cart (one or more
+// platforms/services) and only pay once the cart total clears Rs 300.
+const MIN_CART_PURCHASE = 300;
 
-// ---- Social Media Cart ----
-// Orders under the Rs 300 minimum land here instead of going straight
-// through — a customer keeps adding services until the cart clears that
-// bar, then checks the whole thing out in one go.
-app.get('/api/social-cart/:username', async (req, res) => {
+app.get('/api/cart/:username', async (req, res) => {
   try {
-    const auth = getAuth(req);
-    if (!auth || (auth.r !== 'admin' && auth.u !== req.params.username)) {
-      return res.status(403).json({ error: 'Not authorized to view this account' });
-    }
-    const items = await socialCartCollection.find({ username: req.params.username }).sort({ createdAt: 1 }).toArray();
+    const items = await cartCollection.find({ username: req.params.username }).sort({ createdAt: 1 }).toArray();
     res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/social-cart', async (req, res) => {
+app.post('/api/cart', async (req, res) => {
   try {
-    const {
-      username, platformId, platformName, serviceId, serviceName,
-      variationId, variationName, quantity, linkType, linkValue, price
-    } = req.body;
-    if (!username || !platformName || !serviceName || !quantity) {
+    const { username, platformId, platformName, serviceId, serviceName, quantity, accountLink, videoLink, price } = req.body;
+    if (!username || !platformName || !serviceName || !quantity || !price) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    const auth = getAuth(req);
-    if (!auth || (auth.r !== 'admin' && auth.u !== username)) {
-      return res.status(403).json({ error: 'Not authorized to add to this cart' });
-    }
     const item = {
-      id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
+      id: Date.now().toString(),
       username,
       platformId: platformId || '',
       platformName,
       serviceId: serviceId || '',
       serviceName,
-      variationId: variationId || '',
-      variationName: variationName || '',
       quantity: Number(quantity) || 0,
-      linkType: linkType || '',
-      linkValue: linkValue || '',
+      accountLink: accountLink || '',
+      videoLink: videoLink || '',
       price: Number(price) || 0,
       createdAt: new Date()
     };
-    await socialCartCollection.insertOne(item);
-    res.json(item);
+    await cartCollection.insertOne(item);
+    const items = await cartCollection.find({ username }).sort({ createdAt: 1 }).toArray();
+    res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/social-cart/:id', async (req, res) => {
+app.delete('/api/cart/:username/:itemId', async (req, res) => {
   try {
-    const item = await socialCartCollection.findOne({ id: req.params.id });
-    if (!item) return res.status(404).json({ error: 'Cart item not found' });
-    const auth = getAuth(req);
-    if (!auth || (auth.r !== 'admin' && auth.u !== item.username)) {
-      return res.status(403).json({ error: 'Not authorized to remove this item' });
-    }
-    await socialCartCollection.deleteOne({ id: req.params.id });
-    res.json({ success: true });
+    await cartCollection.deleteOne({ id: req.params.itemId, username: req.params.username });
+    const items = await cartCollection.find({ username: req.params.username }).sort({ createdAt: 1 }).toArray();
+    res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Pays for everything currently in a customer's cart in one shot. The price
-// of every line item is recomputed here from the live service/variation
-// data (never trusted from the client) so a stale or tampered cart price
-// can never be charged.
-app.post('/api/social-cart/:username/checkout', async (req, res) => {
+// Pay for everything currently in the cart in one go — deducts the combined
+// total from credits, files a waiting/fulfillment entry and an order record
+// per item (same as a direct social order), then empties the cart.
+app.post('/api/cart/:username/checkout', async (req, res) => {
   try {
-    const username = req.params.username;
-    const auth = getAuth(req);
-    if (!auth || (auth.r !== 'admin' && auth.u !== username)) {
-      return res.status(403).json({ error: 'Not authorized to check out this cart' });
-    }
-    const { name, whatsapp } = req.body;
-    const items = await socialCartCollection.find({ username }).toArray();
-    if (items.length === 0) return res.status(400).json({ error: 'Your cart is empty' });
+    const { username } = req.params;
+    const { purchaseId } = req.body;
+    const items = await cartCollection.find({ username }).sort({ createdAt: 1 }).toArray();
+    if (!items.length) return res.status(400).json({ error: 'Your cart is empty' });
 
-    const platforms = await socialServicesCollection.find({}).toArray();
-    let total = 0;
-    const priced = items.map(item => {
-      const platform = platforms.find(p => p.id === item.platformId);
-      const service = platform ? (platform.services || []).find(s => s.id === item.serviceId) : null;
-      let unitPrice = item.price;
-      if (service) {
-        if (item.variationId) {
-          const variation = (service.variations || []).find(v => v.id === item.variationId);
-          if (variation) unitPrice = Math.round(((variation.sellingPrice || 0) / 1000) * item.quantity);
-        } else {
-          unitPrice = Math.round(((service.sellingPrice || 0) / 1000) * item.quantity);
-        }
-      }
-      total += unitPrice;
-      return { ...item, price: unitPrice };
-    });
-
-    if (total < 300) {
-      return res.status(400).json({ error: `Minimum purchase amount is Rs 300. Your cart total is Rs ${total} — add more services to reach it.` });
+    const total = items.reduce((sum, it) => sum + (Number(it.price) || 0), 0);
+    if (total < MIN_CART_PURCHASE) {
+      return res.status(400).json({ error: `Minimum purchase amount is Rs ${MIN_CART_PURCHASE} — add more services to your cart to checkout.` });
     }
 
-    const purchaseId = 'cart_' + Date.now().toString();
-    const claimed = await claimIdempotencyKey(`cartcheckout:${purchaseId}`);
-    if (!claimed) return res.status(400).json({ error: 'Checkout already processed' });
+    const key = purchaseId ? `cart-checkout:${purchaseId}` : null;
+    const claimed = await claimIdempotencyKey(key);
+    if (!claimed) {
+      const existing = await usersCollection.findOne({ username });
+      if (!existing) return res.status(404).json({ error: 'User not found' });
+      return res.json(sanitizeUser(existing));
+    }
 
     const result = await usersCollection.findOneAndUpdate(
       { username, credits: { $gte: total } },
       { $inc: { credits: -total } },
       { returnDocument: 'after' }
     );
-    const updatedUser = result && result.value !== undefined ? result.value : result;
-    if (!updatedUser) {
+    const updated = result && result.value !== undefined ? result.value : result;
+    if (!updated) {
+      const user = await usersCollection.findOne({ username });
+      if (!user) return res.status(404).json({ error: 'User not found' });
       return res.status(400).json({ error: 'Insufficient credits' });
     }
 
@@ -1869,64 +1798,62 @@ app.post('/api/social-cart/:username/checkout', async (req, res) => {
       username,
       type: 'debit',
       amount: total,
-      reason: `Social media cart checkout (${priced.length} item${priced.length !== 1 ? 's' : ''})`,
-      purchaseId,
-      balanceAfter: updatedUser.credits,
+      reason: 'Social media cart checkout',
+      purchaseId: purchaseId || null,
+      balanceAfter: updated.credits,
       createdAt: new Date()
     });
 
-    for (const item of priced) {
-      const orderId = Date.now().toString() + Math.random().toString(36).slice(2, 7);
-      const label = `${item.platformName} - ${item.serviceName}${item.variationName ? ' - ' + item.variationName : ''}`;
-      await socialOrdersCollection.insertOne({
-        id: orderId,
-        platformId: item.platformId,
-        platformName: item.platformName,
-        serviceId: item.serviceId,
-        serviceName: item.serviceName,
-        variationId: item.variationId,
-        variationName: item.variationName,
-        quantity: item.quantity,
-        accountLink: item.linkType === 'accountLink' ? item.linkValue : '',
-        videoLink: item.linkType === 'videoLink' ? item.linkValue : '',
-        name: name || username,
-        username,
-        whatsapp: whatsapp || '',
-        price: item.price,
-        dealId: '',
-        status: 'pending',
-        createdAt: new Date()
-      });
-      await waitingCollection.insertOne({
-        id: orderId + 'w',
-        subscriptionId: null,
-        subscriptionName: label,
-        isCustomRequest: false,
-        name: name || username,
-        username,
-        whatsapp: whatsapp || '',
-        months: 1,
-        email: '',
-        paidWithCredits: true,
-        creditsAmount: item.price,
-        isSocialOrder: true,
-        platformId: item.platformId,
-        platformName: item.platformName,
-        serviceId: item.serviceId,
-        serviceName: item.serviceName,
-        quantity: item.quantity,
-        linkType: item.linkType || '',
-        linkValue: item.linkValue || '',
-        price: item.price,
-        fulfilled: false,
-        purchasedAt: new Date().toISOString(),
-        createdAt: new Date()
-      });
-    }
+    const now = new Date();
+    const waitingEntries = items.map(it => ({
+      id: `${Date.now().toString()}${Math.random().toString(36).slice(2, 6)}`,
+      subscriptionId: null,
+      subscriptionName: `${it.platformName} - ${it.serviceName}`,
+      isCustomRequest: false,
+      name: updated.name || updated.username,
+      username,
+      whatsapp: updated.whatsapp || '',
+      months: 1,
+      email: '',
+      paidWithCredits: true,
+      creditsAmount: it.price,
+      isSocialOrder: true,
+      platformId: it.platformId || null,
+      platformName: it.platformName,
+      serviceId: it.serviceId || null,
+      serviceName: it.serviceName,
+      quantity: it.quantity,
+      linkType: it.accountLink ? 'accountLink' : (it.videoLink ? 'videoLink' : ''),
+      linkValue: it.accountLink || it.videoLink || '',
+      price: it.price,
+      fulfilled: false,
+      purchasedAt: now.toISOString(),
+      createdAt: now
+    }));
+    if (waitingEntries.length) await waitingCollection.insertMany(waitingEntries);
 
-    await socialCartCollection.deleteMany({ username });
+    const orders = items.map(it => ({
+      id: `${Date.now().toString()}${Math.random().toString(36).slice(2, 6)}`,
+      platformId: it.platformId || '',
+      platformName: it.platformName,
+      serviceId: it.serviceId || '',
+      serviceName: it.serviceName,
+      quantity: it.quantity,
+      accountLink: it.accountLink || '',
+      videoLink: it.videoLink || '',
+      name: updated.name || updated.username,
+      username,
+      whatsapp: updated.whatsapp || '',
+      price: it.price,
+      dealId: '',
+      status: 'pending',
+      createdAt: now
+    }));
+    if (orders.length) await socialOrdersCollection.insertMany(orders);
 
-    res.json({ success: true, total, itemCount: priced.length, user: sanitizeUser(updatedUser) });
+    await cartCollection.deleteMany({ username });
+
+    res.json({ user: sanitizeUser(updated), orders });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2600,46 +2527,33 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', database: db ? 'connected' : 'disconnected' });
 });
 
-
 // ─── Start server ──────────────────────────────────────────
 
-// Safety-net cleanup for very old, clearly-abandoned expired customer
-// entries (well past any reasonable time an admin would reset a screen).
-//
-// IMPORTANT: this used to purge a customer the day *after* their expiry,
-// no matter what — which silently deleted the very record the "screen
-// needs reset" blink in the admin portal depends on. That made screens
-// stop blinking on their own after one day even though the admin never
-// touched the PIN, which is the opposite of what it's supposed to do
-// (blink until the admin actually regenerates the PIN/password). The
-// real, immediate cleanup now happens client-side the moment the admin
-// hits "Gen PIN" (see handleGeneratePin in index.html) — this hourly job
-// is now just a long-window fallback for screens that never got reset at
-// all, so the database doesn't grow forever from truly abandoned entries.
+// Automatically and permanently remove subscription entries that have expired.
+// Uses an atomic $pull across every account/screen at once (no read-modify-write),
+// so it can never collide with or erase a purchase that's being saved at the same time.
 async function cleanupExpiredCustomers() {
   try {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 45);
-    const cutoffStr = cutoff.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    const todayStr = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
     const result = await subscriptionsCollection.updateMany(
       {},
       {
         $pull: {
           'accounts.$[].screens.$[].customers': {
-            expiryDate: { $exists: true, $ne: '', $lt: cutoffStr }
+            expiryDate: { $exists: true, $ne: '', $lt: todayStr }
           }
         }
       }
     );
     if (result.modifiedCount > 0) {
-      console.log(`🧹 Cleaned up long-abandoned (45+ day) expired customer entries from ${result.modifiedCount} subscription(s)`);
+      console.log(`🧹 Cleaned up expired customer entries from ${result.modifiedCount} subscription(s)`);
     }
   } catch (err) {
     console.error('❌ Cleanup error:', err);
   }
 }
 
-
+const PORT = process.env.PORT || 5000;
 
 connectDB()
   .then(() => seedData())
