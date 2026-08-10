@@ -1160,7 +1160,7 @@
 
     const fetchIncome = async (period = 'all', customStart, customEnd) => {
       let url = `${API_BASE}/api/income?period=${period}&t=${Date.now()}`;
-      if (period === 'custom' && customStart) {
+      if ((period === 'custom' || period === 'month') && customStart) {
         url += `&startDate=${encodeURIComponent(customStart)}&endDate=${encodeURIComponent(customEnd || '')}`;
       }
       const res = await fetch(url, {
@@ -6623,6 +6623,13 @@
       const [incomePeriod, setIncomePeriod] = useState('all');
       const [incomeCustomStart, setIncomeCustomStart] = useState('');
       const [incomeCustomEnd, setIncomeCustomEnd] = useState('');
+      // Backs the "Specific Month" quick-picker — a friendlier way to check
+      // one month's income than manually typing two exact dates. Defaults
+      // to the current month/year.
+      const [incomeMonthPick, setIncomeMonthPick] = useState(() => {
+        const now = new Date();
+        return { month: now.getMonth(), year: now.getFullYear() };
+      });
       const [incomeLoading, setIncomeLoading] = useState(false);
       const { addToast, recoveryNumber, setRecoveryNumber, theme, changeTheme } = useContext(AppContext);
       const { user, setUser, refreshUser } = useContext(UserContext);
@@ -7140,6 +7147,18 @@
         }
       };
 
+      // "Specific Month" is just the custom-range fetch under the hood,
+      // with the two dates worked out from a plain month/year picker so
+      // nobody has to figure out the exact first/last day themselves.
+      const loadIncomeForMonth = async (month, year) => {
+        const start = new Date(year, month, 1);
+        const end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+        const toDateStr = (d) => d.toISOString().slice(0, 10);
+        setIncomeCustomStart(toDateStr(start));
+        setIncomeCustomEnd(toDateStr(end));
+        await loadIncome('custom', toDateStr(start), toDateStr(end));
+      };
+
       const loadPromotions = async () => {
         try {
           const data = await fetchPromotions();
@@ -7169,7 +7188,8 @@
         if (activeTab === 'broadcast') loadNotices();
         if (activeTab === 'social') loadSocialOrders();
         if (activeTab === 'overview' || activeTab === 'income') {
-          if (incomePeriod !== 'custom') loadIncome(incomePeriod);
+          if (incomePeriod === 'month') loadIncomeForMonth(incomeMonthPick.month, incomeMonthPick.year);
+          else if (incomePeriod !== 'custom') loadIncome(incomePeriod);
         }
       }, [activeTab, incomePeriod]);
 
@@ -9183,13 +9203,28 @@
               <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
                 <h3 className="text-lg font-semibold text-white"><i className="fas fa-coins mr-2 text-green-400"></i> Income Dashboard</h3>
                 <div className="flex flex-wrap items-center gap-2">
-                  <select value={incomePeriod} onChange={(e) => setIncomePeriod(e.target.value)} className="input-neon text-sm py-1 px-3 w-auto">
+                  <select value={incomePeriod} onChange={(e) => { setIncomePeriod(e.target.value); if (e.target.value === 'month') loadIncomeForMonth(incomeMonthPick.month, incomeMonthPick.year); }} className="input-neon text-sm py-1 px-3 w-auto">
                     <option value="all">All Time</option>
                     <option value="30">Last 30 Days</option>
                     <option value="60">Last 60 Days</option>
                     <option value="90">Last 90 Days</option>
+                    <option value="month">Specific Month</option>
                     <option value="custom">Custom Range</option>
                   </select>
+                  {incomePeriod === 'month' && (
+                    <>
+                      <select value={incomeMonthPick.month} onChange={(e) => { const next = { ...incomeMonthPick, month: Number(e.target.value) }; setIncomeMonthPick(next); loadIncomeForMonth(next.month, next.year); }} className="input-neon text-sm py-1 px-3 w-auto">
+                        {['January','February','March','April','May','June','July','August','September','October','November','December'].map((m, i) => (
+                          <option key={i} value={i}>{m}</option>
+                        ))}
+                      </select>
+                      <select value={incomeMonthPick.year} onChange={(e) => { const next = { ...incomeMonthPick, year: Number(e.target.value) }; setIncomeMonthPick(next); loadIncomeForMonth(next.month, next.year); }} className="input-neon text-sm py-1 px-3 w-auto">
+                        {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
                   {incomePeriod === 'custom' && (
                     <>
                       <input type="date" value={incomeCustomStart} onChange={(e) => setIncomeCustomStart(e.target.value)} className="input-neon text-sm py-1 px-3 w-auto" />
@@ -9198,7 +9233,7 @@
                       <button onClick={() => { if (incomeCustomStart) loadIncome('custom', incomeCustomStart, incomeCustomEnd); else addToast('Pick a start date', 'error'); }} className="btn-neon-sm text-sm">Apply</button>
                     </>
                   )}
-                  <button onClick={() => loadIncome(incomePeriod, incomeCustomStart, incomeCustomEnd)} className="btn-red text-sm"><i className="fas fa-sync mr-1"></i></button>
+                  <button onClick={() => incomePeriod === 'month' ? loadIncomeForMonth(incomeMonthPick.month, incomeMonthPick.year) : loadIncome(incomePeriod, incomeCustomStart, incomeCustomEnd)} className="btn-red text-sm"><i className="fas fa-sync mr-1"></i></button>
                 </div>
               </div>
               {incomeLoading ? (
@@ -9223,7 +9258,7 @@
                     </div>
                   </div>
                   <div className="flex flex-wrap justify-between items-center gap-2 text-sm">
-                    <p className="text-blue-400 font-medium">{incomePeriod === 'all' ? 'All Time' : incomePeriod === 'custom' ? 'Custom Range' : `Last ${incomePeriod} Days`}
+                    <p className="text-blue-400 font-medium">{incomePeriod === 'all' ? 'All Time' : incomePeriod === 'month' ? `${['January','February','March','April','May','June','July','August','September','October','November','December'][incomeMonthPick.month]} ${incomeMonthPick.year}` : incomePeriod === 'custom' ? 'Custom Range' : `Last ${incomePeriod} Days`}
                       <span className="text-white/30 ml-2 font-normal">{incomeData.startDate ? new Date(incomeData.startDate).toLocaleDateString() : 'N/A'} - {new Date(incomeData.endDate).toLocaleDateString()}</span>
                     </p>
                     <p className="text-white/30">{incomeData.customers?.length || 0} customers · Avg profit/customer: RS {incomeData.customers?.length > 0 ? (incomeData.totalProfit / incomeData.customers.length).toFixed(2) : 0}</p>
