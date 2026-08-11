@@ -2243,6 +2243,22 @@ app.post('/api/reviews', requireUser, async (req, res) => {
   }
 });
 
+// Admin-only — removes a review outright (e.g. spam, abusive language,
+// or a customer's request to take it down). No "soft delete" — once
+// removed it's gone, matching how deals/promotions/users are deleted
+// elsewhere in the admin panel.
+app.delete('/api/reviews/:id', requireAdmin, async (req, res) => {
+  try {
+    const result = await reviewsCollection.deleteOne({ id: req.params.id });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Help / FAQ (admin-added, on top of the built-in ones in the UI) ----
 app.get('/api/faqs', async (req, res) => {
   try {
