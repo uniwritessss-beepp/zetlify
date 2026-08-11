@@ -1358,6 +1358,21 @@
       return result;
     };
 
+    // Admin posting a review directly — unlike submitReview above, this
+    // uses the admin's own auth (authHeaders picks it up normally here,
+    // since there's no customer-login ambiguity to worry about) and lets
+    // the admin choose whatever name shows next to the review.
+    const submitAdminReview = async (rating, reviewText, username) => {
+      const res = await fetch(`${API_BASE}/api/reviews/admin`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ rating, reviewText, username }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw result;
+      return result;
+    };
+
     const addWaitingCustomer = async (data) => {
       const res = await fetch(`${API_BASE}/api/waiting`, {
         method: 'POST',
@@ -7041,8 +7056,9 @@
     // logged-in customer, and a rating with no written review (or a
     // review with no rating) is never allowed — the Submit button stays
     // disabled until both are filled in, and the server enforces the
-    // same rule again independently. A customer only ever has one
-    // review on file; submitting again edits it in place.
+    // same rule again independently. A customer can post as many
+    // separate reviews as they like — each submission adds a new one
+    // rather than replacing a previous review.
     function StarRatingInput({ value, onChange }) {
       const [hover, setHover] = useState(0);
       return (
@@ -7081,27 +7097,14 @@
       const [myRating, setMyRating] = useState(0);
       const [myText, setMyText] = useState('');
       const [submitting, setSubmitting] = useState(false);
-      // Whether the "your review" box is open for writing/editing, or
-      // collapsed to a read-only confirmation. Someone who already has a
-      // review lands on the read-only view — it no longer sits open in an
-      // editable textarea after they've posted it; they tap Edit to reopen it.
-      const [editing, setEditing] = useState(false);
 
       const load = () => {
         setLoading(true);
-        fetchReviews().then(list => {
-          setReviews(list);
-          if (user) {
-            const mine = list.find(r => r.username === user.username);
-            if (mine) { setMyRating(mine.rating); setMyText(mine.reviewText); setEditing(false); }
-            else { setMyRating(0); setMyText(''); setEditing(true); }
-          }
-        }).finally(() => setLoading(false));
+        fetchReviews().then(setReviews).finally(() => setLoading(false));
       };
 
       useEffect(() => { load(); }, [user]);
 
-      const myExistingReview = user ? reviews.find(r => r.username === user.username) : null;
       const avgRating = reviews.length ? (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) : 0;
 
       const handleSubmit = async () => {
@@ -7110,7 +7113,9 @@
         setSubmitting(true);
         try {
           await submitReview(myRating, myText.trim());
-          addToast(myExistingReview ? 'Your review has been updated!' : 'Thanks for your review!', 'success');
+          addToast('Thanks for your review!', 'success');
+          setMyRating(0);
+          setMyText('');
           load();
         } catch (err) {
           addToast((err && err.error) || 'Failed to submit review', 'error');
@@ -7134,31 +7139,15 @@
 
           {user ? (
             <div className="glass-panel max-w-xl mx-auto">
-              {editing ? (
-                <>
-                  <h3 className="text-white font-bold mb-3">{myExistingReview ? 'Edit Your Review' : 'Write a Review'}</h3>
-                  <div className={myRating ? 'mb-4' : ''}><StarRatingInput value={myRating} onChange={setMyRating} /></div>
-                  {myRating > 0 && (
-                    <div className="review-textarea-wrap">
-                      <textarea value={myText} onChange={(e) => setMyText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..." autoFocus></textarea>
-                      <div className="flex gap-2 mt-3">
-                        <button onClick={handleSubmit} disabled={submitting || !myRating || !myText.trim()} className="btn-neon flex-1 py-3 disabled:opacity-40 disabled:cursor-not-allowed">
-                          {submitting ? <span className="spinner"></span> : (myExistingReview ? 'Update Review' : 'Submit Review')}
-                        </button>
-                        {myExistingReview && (
-                          <button onClick={() => { setMyRating(myExistingReview.rating); setMyText(myExistingReview.reviewText); setEditing(false); }} className="btn-neon-outline">Cancel</button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <h3 className="text-white font-bold mb-3">Your Review</h3>
-                  <StarDisplay rating={myRating} />
-                  <p className="text-white/60 text-sm mt-2">{myText}</p>
-                  <button onClick={() => setEditing(true)} className="btn-neon-outline mt-3 text-sm"><i className="fas fa-edit mr-2"></i> Edit Review</button>
-                </>
+              <h3 className="text-white font-bold mb-3">Write a Review</h3>
+              <div className={myRating ? 'mb-4' : ''}><StarRatingInput value={myRating} onChange={setMyRating} /></div>
+              {myRating > 0 && (
+                <div className="review-textarea-wrap">
+                  <textarea value={myText} onChange={(e) => setMyText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..." autoFocus></textarea>
+                  <button onClick={handleSubmit} disabled={submitting || !myRating || !myText.trim()} className="btn-neon w-full py-3 mt-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                    {submitting ? <span className="spinner"></span> : 'Submit Review'}
+                  </button>
+                </div>
               )}
             </div>
           ) : (
@@ -7182,7 +7171,7 @@
                     <StarDisplay rating={r.rating} />
                   </div>
                   <p className="text-white/60 text-sm">{r.reviewText}</p>
-                  <p className="text-white/25 text-xs mt-2">{new Date(r.createdAt).toLocaleDateString()}{r.updatedAt !== r.createdAt ? ' (edited)' : ''}</p>
+                  <p className="text-white/25 text-xs mt-2">{new Date(r.createdAt).toLocaleDateString()}</p>
                 </div>
               ))
             )}
@@ -7782,6 +7771,40 @@
           addToast('Review deleted', 'success');
         } catch (err) {
           addToast((err && err.error) || 'Failed to delete review', 'error');
+        }
+      };
+
+      // Admin's own "Add Review" flow — asks for the rating first, then
+      // (once a rating is picked) the review text, then (once that's
+      // written) the name to show with it. Mirrors the step-reveal feel
+      // of the public reviews form.
+      const [showAddReview, setShowAddReview] = useState(false);
+      const [addReviewRating, setAddReviewRating] = useState(0);
+      const [addReviewText, setAddReviewText] = useState('');
+      const [addReviewUsername, setAddReviewUsername] = useState('');
+      const [addingReview, setAddingReview] = useState(false);
+
+      const resetAddReviewForm = () => {
+        setAddReviewRating(0);
+        setAddReviewText('');
+        setAddReviewUsername('');
+      };
+
+      const handleAddReview = async () => {
+        if (!addReviewRating) { addToast('Please select a star rating', 'error'); return; }
+        if (!addReviewText.trim()) { addToast('Please write the review text', 'error'); return; }
+        if (!addReviewUsername.trim()) { addToast('Please enter a name to show with the review', 'error'); return; }
+        setAddingReview(true);
+        try {
+          const review = await submitAdminReview(addReviewRating, addReviewText.trim(), addReviewUsername.trim());
+          setReviewsList(prev => [review, ...prev]);
+          addToast('Review added', 'success');
+          resetAddReviewForm();
+          setShowAddReview(false);
+        } catch (err) {
+          addToast((err && err.error) || 'Failed to add review', 'error');
+        } finally {
+          setAddingReview(false);
         }
       };
 
@@ -10405,8 +10428,39 @@
           {activeTab === 'reviews' && (
             <div className="space-y-4">
               <div className="glass-panel">
-                <h3 className="text-lg font-bold text-white mb-1"><i className="fas fa-star mr-2 text-red-400"></i> Customer Reviews</h3>
+                <div className="flex flex-wrap justify-between items-center gap-3 mb-1">
+                  <h3 className="text-lg font-bold text-white"><i className="fas fa-star mr-2 text-red-400"></i> Customer Reviews</h3>
+                  <button onClick={() => { resetAddReviewForm(); setShowAddReview(!showAddReview); }} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> Add Review</button>
+                </div>
                 <p className="text-white/40 text-sm mb-4">Everything customers have posted on the public Reviews page. Delete anything spammy, abusive, or that a customer asked to have taken down.</p>
+
+                {showAddReview && (
+                  <div className="bg-black/20 rounded-lg p-4 mb-4">
+                    <label className="text-white/50 text-sm font-medium block mb-2">Rating</label>
+                    <div className={addReviewRating ? 'mb-4' : ''}><StarRatingInput value={addReviewRating} onChange={setAddReviewRating} /></div>
+                    {addReviewRating > 0 && (
+                      <div className="review-textarea-wrap space-y-3">
+                        <div>
+                          <label className="text-white/50 text-sm font-medium">Review</label>
+                          <textarea value={addReviewText} onChange={(e) => setAddReviewText(e.target.value)} className="input-neon mt-1" rows="3" placeholder="What should the review say?" autoFocus></textarea>
+                        </div>
+                        {addReviewText.trim() && (
+                          <div className="review-textarea-wrap">
+                            <label className="text-white/50 text-sm font-medium">Username (shown with the review)</label>
+                            <input type="text" value={addReviewUsername} onChange={(e) => setAddReviewUsername(e.target.value)} className="input-neon mt-1" placeholder="e.g. john_doe" />
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <button onClick={handleAddReview} disabled={addingReview || !addReviewRating || !addReviewText.trim() || !addReviewUsername.trim()} className="btn-neon flex-1 py-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                            {addingReview ? <span className="spinner"></span> : 'Add Review'}
+                          </button>
+                          <button onClick={() => { setShowAddReview(false); resetAddReviewForm(); }} className="btn-neon-outline">Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {reviewsList.length === 0 ? (
                   <p className="text-white/30 text-center py-8"><i className="fas fa-star text-3xl mb-3 block"></i> No reviews yet.</p>
                 ) : (
@@ -10419,7 +10473,7 @@
                             <StarDisplay rating={r.rating} />
                           </div>
                           <p className="text-white/60 text-sm break-words">{r.reviewText}</p>
-                          <p className="text-white/25 text-xs mt-1">{new Date(r.createdAt).toLocaleDateString()}{r.updatedAt !== r.createdAt ? ' (edited)' : ''}</p>
+                          <p className="text-white/25 text-xs mt-1">{new Date(r.createdAt).toLocaleDateString()}</p>
                         </div>
                         <button onClick={() => handleDeleteReview(r.id, r.username)} className="btn-danger text-xs whitespace-nowrap"><i className="fas fa-trash"></i></button>
                       </div>
@@ -11822,7 +11876,7 @@
                     <div className="flex items-start gap-3 text-white/30 text-sm"><i className="fas fa-map-marker-alt text-red-400 mt-1"></i><span>Lahore, Pakistan</span></div>
                     <div className="flex items-center gap-3 text-white/30 text-sm"><i className="fas fa-phone text-red-400"></i><a href="tel:+923079163485" className="footer-link">+92 307 9163485</a></div>
                     <div className="flex items-center gap-3 text-white/30 text-sm"><i className="fab fa-whatsapp text-green-400"></i><a href="https://wa.me/923079163485" target="_blank" rel="noopener noreferrer" className="footer-link">WhatsApp</a></div>
-                    <div className="flex items-center gap-3 text-white/30 text-sm"><i className="fas fa-envelope text-red-400"></i><a href="mailto:support@zetlify.com" className="footer-link">support@zetlify.com</a></div>
+                    <div className="flex items-center gap-3 text-white/30 text-sm"><i className="fas fa-envelope text-red-400"></i><a href="mailto:zetlify.support@gmail.com" className="footer-link">zetlify.support@gmail.com</a></div>
                   </div>
                 </div>
                 <div>
