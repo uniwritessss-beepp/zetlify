@@ -653,7 +653,36 @@
       try { const v = localStorage.getItem(key); if (v) return v; } catch (e) {}
       try { return sessionStorage.getItem(key); } catch (e) { return null; }
     };
-    const getAuthToken = () => readAuthToken('adminToken') || readAuthToken('managerToken') || readAuthToken('authToken') || null;
+    // Which of the two admin-panel logins THIS browser tab actually used.
+    // Deliberately kept in sessionStorage only (never localStorage), because
+    // sessionStorage is per-tab while localStorage is shared by every tab on
+    // the site. Without this, if the same browser had ever logged into
+    // /admin, a leftover adminToken in localStorage would silently win over
+    // a manager's own managerToken (adminToken was checked first) — so a
+    // manager's session would quietly run with full admin rights and every
+    // section restriction would appear not to work. Tagging the role this
+    // tab actually logged in as, and only ever using that tab's own token,
+    // closes that gap: a manager tab only ever authenticates as that
+    // manager, no matter what's sitting in localStorage from an earlier
+    // admin session in another tab.
+    const setActiveAuthRole = (role) => {
+      try {
+        if (role) sessionStorage.setItem('activeAuthRole', role);
+        else sessionStorage.removeItem('activeAuthRole');
+      } catch (e) { /* sessionStorage blocked - falls back to old priority order below */ }
+    };
+    const getActiveAuthRole = () => {
+      try { return sessionStorage.getItem('activeAuthRole'); } catch (e) { return null; }
+    };
+    const getAuthToken = () => {
+      const role = getActiveAuthRole();
+      if (role === 'admin') return readAuthToken('adminToken') || readAuthToken('authToken') || null;
+      if (role === 'manager') return readAuthToken('managerToken') || readAuthToken('authToken') || null;
+      // No explicit role recorded for this tab (e.g. sessionStorage was
+      // blocked, or this is a customer-only tab that never logged into
+      // either admin panel) — fall back to the original priority order.
+      return readAuthToken('adminToken') || readAuthToken('managerToken') || readAuthToken('authToken') || null;
+    };
     const authHeaders = (base = {}) => {
       const token = getAuthToken();
       return token ? { ...base, 'Authorization': `Bearer ${token}` } : { ...base };
@@ -889,7 +918,7 @@
       const success = res.ok && data.success;
       // Store the admin token so the admin panel's data requests come back
       // with the full, unmasked account credentials.
-      if (success && data.token) saveAuthToken('adminToken', data.token);
+      if (success && data.token) { saveAuthToken('adminToken', data.token); setActiveAuthRole('admin'); }
       return { ...data, success };
     };
 
@@ -904,7 +933,7 @@
       });
       const data = await res.json().catch(() => ({}));
       const success = res.ok && data.success;
-      if (success && data.token) saveAuthToken('managerToken', data.token);
+      if (success && data.token) { saveAuthToken('managerToken', data.token); setActiveAuthRole('manager'); }
       return { ...data, success };
     };
 
@@ -11705,7 +11734,7 @@
 
           {activeTab === 'admin' && (
             <section id="admin-section" className="px-4 max-w-7xl mx-auto py-12">
-              {!isAdmin ? <AdminLogin onLogin={() => setIsAdmin(true)} /> : <AdminDashboard subscriptions={subscriptions} setSubscriptions={setSubscriptions} isAdmin={true} permissions={null} onLogout={() => { setIsAdmin(false); localStorage.removeItem('adminToken'); try { sessionStorage.removeItem('adminToken'); } catch (e) {} navigateTo('/'); }} onBack={() => navigateTo('/')} deals={deals} setDeals={setDeals} promotions={promotions} setPromotions={setPromotions} socialServices={socialServices} setSocialServices={setSocialServices} />}
+              {!isAdmin ? <AdminLogin onLogin={() => setIsAdmin(true)} /> : <AdminDashboard subscriptions={subscriptions} setSubscriptions={setSubscriptions} isAdmin={true} permissions={null} onLogout={() => { setIsAdmin(false); localStorage.removeItem('adminToken'); try { sessionStorage.removeItem('adminToken'); } catch (e) {} setActiveAuthRole(null); navigateTo('/'); }} onBack={() => navigateTo('/')} deals={deals} setDeals={setDeals} promotions={promotions} setPromotions={setPromotions} socialServices={socialServices} setSocialServices={setSocialServices} />}
             </section>
           )}
 
@@ -11714,7 +11743,7 @@
               {!isManager ? (
                 <ManagerLogin onLogin={(perms) => { setManagerPermissions(perms); setIsManager(true); }} />
               ) : (
-                <AdminDashboard subscriptions={subscriptions} setSubscriptions={setSubscriptions} isAdmin={false} permissions={managerPermissions} onLogout={() => { setIsManager(false); setManagerPermissions(null); localStorage.removeItem('managerToken'); try { sessionStorage.removeItem('managerToken'); } catch (e) {} navigateTo('/'); }} onBack={() => navigateTo('/')} deals={deals} setDeals={setDeals} promotions={promotions} setPromotions={setPromotions} socialServices={socialServices} setSocialServices={setSocialServices} />
+                <AdminDashboard subscriptions={subscriptions} setSubscriptions={setSubscriptions} isAdmin={false} permissions={managerPermissions} onLogout={() => { setIsManager(false); setManagerPermissions(null); localStorage.removeItem('managerToken'); try { sessionStorage.removeItem('managerToken'); } catch (e) {} setActiveAuthRole(null); navigateTo('/'); }} onBack={() => navigateTo('/')} deals={deals} setDeals={setDeals} promotions={promotions} setPromotions={setPromotions} socialServices={socialServices} setSocialServices={setSocialServices} />
               )}
             </section>
           )}
