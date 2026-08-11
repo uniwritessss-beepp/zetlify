@@ -438,6 +438,9 @@
        they can see exactly how far along things are. ─── */
     .processing-card { animation: proc-card-in .35s cubic-bezier(.34,1.56,.64,1); width:280px; max-width:88vw; }
     @keyframes proc-card-in { from { opacity:0; transform:scale(.9) translateY(10px); } to { opacity:1; transform:scale(1) translateY(0); } }
+    /* Review textarea sliding in from the top once a star rating is picked */
+    @keyframes review-slide-down { from { opacity:0; transform:translateY(-16px); } to { opacity:1; transform:translateY(0); } }
+    .review-textarea-wrap { animation: review-slide-down .35s cubic-bezier(.25,.8,.35,1); transform-origin: top; }
     .processing-badge-wrap { position:relative; width:76px; height:76px; margin:0 auto 22px; }
     .processing-badge-ring { position:absolute; inset:0; border-radius:50%; border:2px solid rgba(var(--t-primary),0.25); }
     .processing-badge-ring.spin { border-top-color:var(--t-primary-hex); border-right-color:var(--t-primary-hex); animation:proc-badge-spin 1.1s linear infinite; }
@@ -1312,9 +1315,17 @@
 
     // ─── Customer reviews ──────────────────────────────────────
     // GET is public — anyone can read reviews without logging in.
-    // POST requires a logged-in customer (authHeaders sends their
-    // token); the server rejects it otherwise regardless of what the
-    // UI shows, so this is never just a client-side gate.
+    // POST requires a logged-in customer. This deliberately does NOT use
+    // authHeaders()/getAuthToken() — those pick whichever of
+    // admin/manager/customer token happens to be sitting in storage,
+    // preferring admin/manager. Since adminToken/managerToken live in
+    // localStorage (shared across every tab on this browser), if this
+    // browser was ever used to log into /admin — even in a different tab
+    // — that leftover admin token would silently win over your own
+    // customer login here, and the server correctly rejects it since
+    // reviews are a customer-only action. Reading 'authToken' directly
+    // guarantees this always uses your own customer login, regardless of
+    // what else is signed in on this browser.
     const fetchReviews = async () => {
       const res = await fetch(`${API_BASE}/api/reviews?t=${Date.now()}`, {
         headers: { 'Cache-Control': 'no-cache' }
@@ -1324,9 +1335,12 @@
     };
 
     const submitReview = async (rating, reviewText) => {
+      const token = readAuthToken('authToken');
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_BASE}/api/reviews`, {
         method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers,
         body: JSON.stringify({ rating, reviewText }),
       });
       const result = await res.json();
@@ -7105,11 +7119,15 @@
           {user ? (
             <div className="glass-panel max-w-xl mx-auto">
               <h3 className="text-white font-bold mb-3">{myExistingReview ? 'Edit Your Review' : 'Write a Review'}</h3>
-              <div className="mb-4"><StarRatingInput value={myRating} onChange={setMyRating} /></div>
-              <textarea value={myText} onChange={(e) => setMyText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..."></textarea>
-              <button onClick={handleSubmit} disabled={submitting || !myRating || !myText.trim()} className="btn-neon w-full mt-3 py-3 disabled:opacity-40 disabled:cursor-not-allowed">
-                {submitting ? <span className="spinner"></span> : (myExistingReview ? 'Update Review' : 'Submit Review')}
-              </button>
+              <div className={myRating ? 'mb-4' : ''}><StarRatingInput value={myRating} onChange={setMyRating} /></div>
+              {myRating > 0 && (
+                <div className="review-textarea-wrap">
+                  <textarea value={myText} onChange={(e) => setMyText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..." autoFocus></textarea>
+                  <button onClick={handleSubmit} disabled={submitting || !myRating || !myText.trim()} className="btn-neon w-full mt-3 py-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                    {submitting ? <span className="spinner"></span> : (myExistingReview ? 'Update Review' : 'Submit Review')}
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="glass-panel max-w-xl mx-auto text-center">
