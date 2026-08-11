@@ -1310,6 +1310,30 @@
       return res.json();
     };
 
+    // ─── Customer reviews ──────────────────────────────────────
+    // GET is public — anyone can read reviews without logging in.
+    // POST requires a logged-in customer (authHeaders sends their
+    // token); the server rejects it otherwise regardless of what the
+    // UI shows, so this is never just a client-side gate.
+    const fetchReviews = async () => {
+      const res = await fetch(`${API_BASE}/api/reviews?t=${Date.now()}`, {
+        headers: { 'Cache-Control': 'no-cache' }
+      });
+      if (!res.ok) return [];
+      return res.json();
+    };
+
+    const submitReview = async (rating, reviewText) => {
+      const res = await fetch(`${API_BASE}/api/reviews`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ rating, reviewText }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw result;
+      return result;
+    };
+
     const addWaitingCustomer = async (data) => {
       const res = await fetch(`${API_BASE}/api/waiting`, {
         method: 'POST',
@@ -1805,6 +1829,7 @@
       ];
       const navItemsLast = [
         { id: 'help', label: 'Help', icon: 'fa-question-circle' },
+        { id: 'reviews', label: 'Reviews', icon: 'fa-star' },
         { id: 'contact', label: 'Contact', icon: 'fa-envelope' },
         { id: 'social', label: 'Social', icon: 'fa-share-alt' },
       ];
@@ -6987,6 +7012,135 @@
       );
     }
 
+    // ─── CUSTOMER REVIEWS ──────────────────────────────────────
+    // Anyone can read reviews without logging in. Writing one requires a
+    // logged-in customer, and a rating with no written review (or a
+    // review with no rating) is never allowed — the Submit button stays
+    // disabled until both are filled in, and the server enforces the
+    // same rule again independently. A customer only ever has one
+    // review on file; submitting again edits it in place.
+    function StarRatingInput({ value, onChange }) {
+      const [hover, setHover] = useState(0);
+      return (
+        <div className="flex gap-1 text-2xl">
+          {[1, 2, 3, 4, 5].map(n => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => onChange(n)}
+              onMouseEnter={() => setHover(n)}
+              onMouseLeave={() => setHover(0)}
+              className="transition-transform hover:scale-110"
+              aria-label={`Rate ${n} star${n > 1 ? 's' : ''}`}
+            >
+              <i className={`fas fa-star ${n <= (hover || value) ? 'text-yellow-400' : 'text-white/15'}`}></i>
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    function StarDisplay({ rating }) {
+      return (
+        <div className="flex gap-0.5 text-sm">
+          {[1, 2, 3, 4, 5].map(n => (
+            <i key={n} className={`fas fa-star ${n <= rating ? 'text-yellow-400' : 'text-white/15'}`}></i>
+          ))}
+        </div>
+      );
+    }
+
+    function ReviewsPage({ user, onLoginClick }) {
+      const { addToast } = useContext(AppContext);
+      const [reviews, setReviews] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [myRating, setMyRating] = useState(0);
+      const [myText, setMyText] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+
+      const load = () => {
+        setLoading(true);
+        fetchReviews().then(list => {
+          setReviews(list);
+          if (user) {
+            const mine = list.find(r => r.username === user.username);
+            if (mine) { setMyRating(mine.rating); setMyText(mine.reviewText); }
+          }
+        }).finally(() => setLoading(false));
+      };
+
+      useEffect(() => { load(); }, [user]);
+
+      const myExistingReview = user ? reviews.find(r => r.username === user.username) : null;
+      const avgRating = reviews.length ? (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) : 0;
+
+      const handleSubmit = async () => {
+        if (!myRating) { addToast('Please select a star rating', 'error'); return; }
+        if (!myText.trim()) { addToast('Please write a review along with your rating', 'error'); return; }
+        setSubmitting(true);
+        try {
+          await submitReview(myRating, myText.trim());
+          addToast(myExistingReview ? 'Your review has been updated!' : 'Thanks for your review!', 'success');
+          load();
+        } catch (err) {
+          addToast((err && err.error) || 'Failed to submit review', 'error');
+        } finally {
+          setSubmitting(false);
+        }
+      };
+
+      return (
+        <div className="space-y-8">
+          <div className="text-center mb-4">
+            <span className="inline-block px-4 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-medium tracking-wider uppercase mb-3">What Customers Say</span>
+            <h2 className="text-4xl md:text-5xl font-bold text-white neon-text">Customer Reviews</h2>
+            {reviews.length > 0 && (
+              <div className="flex items-center justify-center gap-2 mt-3">
+                <StarDisplay rating={Math.round(avgRating)} />
+                <span className="text-white/50 text-sm">{avgRating.toFixed(1)} out of 5 ({reviews.length} review{reviews.length === 1 ? '' : 's'})</span>
+              </div>
+            )}
+          </div>
+
+          {user ? (
+            <div className="glass-panel max-w-xl mx-auto">
+              <h3 className="text-white font-bold mb-3">{myExistingReview ? 'Edit Your Review' : 'Write a Review'}</h3>
+              <div className="mb-4"><StarRatingInput value={myRating} onChange={setMyRating} /></div>
+              <textarea value={myText} onChange={(e) => setMyText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..."></textarea>
+              <button onClick={handleSubmit} disabled={submitting || !myRating || !myText.trim()} className="btn-neon w-full mt-3 py-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                {submitting ? <span className="spinner"></span> : (myExistingReview ? 'Update Review' : 'Submit Review')}
+              </button>
+            </div>
+          ) : (
+            <div className="glass-panel max-w-xl mx-auto text-center">
+              <i className="fas fa-lock text-white/20 text-2xl mb-2"></i>
+              <p className="text-white/50 text-sm mb-4">Log in to leave your own rating and review — everyone can read reviews, but only logged-in customers can post one.</p>
+              <button onClick={onLoginClick} className="btn-neon-outline"><i className="fas fa-sign-in-alt mr-2"></i> Log In</button>
+            </div>
+          )}
+
+          <div className="max-w-2xl mx-auto space-y-4">
+            {loading ? (
+              <div className="text-center py-10"><span className="spinner"></span></div>
+            ) : reviews.length === 0 ? (
+              <div className="text-center text-white/30 py-10"><i className="fas fa-star text-3xl mb-3 block"></i> No reviews yet — be the first!</div>
+            ) : (
+              reviews.map(r => (
+                <div key={r.id} className="glass-panel">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-white font-medium">@{r.username}</span>
+                    <StarDisplay rating={r.rating} />
+                  </div>
+                  <p className="text-white/60 text-sm">{r.reviewText}</p>
+                  <p className="text-white/25 text-xs mt-2">{new Date(r.createdAt).toLocaleDateString()}{r.updatedAt !== r.createdAt ? ' (edited)' : ''}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      );
+    }
+
     // ─── ADMIN DASHBOARD ──────────────────────────────────────
 
     function AdminDashboard({ subscriptions, setSubscriptions, onLogout, onBack, deals, setDeals, promotions, setPromotions, socialServices, setSocialServices, isAdmin = true, permissions = null }) {
@@ -11805,6 +11959,13 @@
                 <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" className="social-link-card"><span className="social-icon"><i className="fab fa-linkedin-in text-blue-600"></i></span><div><div className="social-name">LinkedIn</div><div className="social-handle">Professional network</div></div><span className="social-arrow"><i className="fas fa-arrow-right"></i></span></a>
                 <a href="https://wa.me/923079163485" target="_blank" rel="noopener noreferrer" className="social-link-card"><span className="social-icon"><i className="fab fa-whatsapp text-green-500"></i></span><div><div className="social-name">WhatsApp</div><div className="social-handle">Chat with us directly</div></div><span className="social-arrow"><i className="fas fa-arrow-right"></i></span></a>
               </div>
+            </section>
+          )}
+
+          {activeTab === 'reviews' && (
+            <section id="reviews-section" className="px-4 max-w-4xl mx-auto py-16">
+              <button onClick={() => navigateTo('/')} className="text-red-400 hover:text-red-300 text-sm mb-6 inline-flex items-center"><i className="fas fa-arrow-left mr-2"></i> Back</button>
+              <ReviewsPage user={user} onLoginClick={() => { navigateTo('/subscriptions'); setFlowStep('auth'); setShowAuth(true); }} />
             </section>
           )}
 

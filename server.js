@@ -45,6 +45,7 @@ let socialServicesCollection;
 let socialOrdersCollection;
 let cartCollection;
 let managersCollection;
+let reviewsCollection;
 
 // ─── SUBSCRIPTION COSTS (Monthly) ──────────────────────────
 const SUBSCRIPTION_COSTS = {
@@ -83,8 +84,12 @@ async function connectDB() {
   socialOrdersCollection = db.collection('socialOrders');
   cartCollection = db.collection('cart');
   managersCollection = db.collection('managers');
+  reviewsCollection = db.collection('reviews');
   await ensureAuthSecret(); // load or create the server-only token-signing secret
   await ensureCredKey(); // load or create the server-only customer-password encryption key
+  // One review per customer — resubmitting updates their existing review
+  // instead of creating a duplicate.
+  try { await reviewsCollection.createIndex({ username: 1 }, { unique: true }); } catch (e) { console.error('⚠️ reviews index failed:', e.message); }
   console.log('✅ Connected to MongoDB');
 }
 
@@ -280,6 +285,16 @@ function requireAdmin(req, res, next) {
   if (!auth || auth.r !== 'admin') {
     return res.status(401).json({ error: 'Admin login required' });
   }
+  next();
+}
+// Gate for customer-only actions (e.g. posting a review) — must be a
+// logged-in customer account specifically, not an admin/manager token.
+function requireUser(req, res, next) {
+  const auth = getAuth(req);
+  if (!auth || auth.r !== 'user') {
+    return res.status(401).json({ error: 'Please log in to do that' });
+  }
+  req.authUsername = auth.u;
   next();
 }
 
@@ -2179,6 +2194,50 @@ app.delete('/api/waiting/:id', requireAccess('waiting', 'delete'), async (req, r
       return res.status(404).json({ error: 'Waiting entry not found' });
     }
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Customer Reviews ----
+// Public read (anyone, logged in or not, can see reviews). Posting one
+// requires a logged-in customer account, and is upsert-by-username — a
+// customer only ever has one review; resubmitting edits it in place
+// rather than adding a duplicate.
+app.get('/api/reviews', async (req, res) => {
+  try {
+    const list = await reviewsCollection.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/reviews', requireUser, async (req, res) => {
+  try {
+    const rating = parseInt(req.body.rating, 10);
+    const reviewText = (req.body.reviewText || '').toString().trim();
+    // Both required together: a rating with no review, or a review with
+    // no rating, are both rejected here — not just discouraged client-side.
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Please select a rating from 1 to 5 stars' });
+    }
+    if (!reviewText) {
+      return res.status(400).json({ error: 'Please write a review along with your rating' });
+    }
+    const username = req.authUsername;
+    const existing = await reviewsCollection.findOne({ username });
+    const now = new Date().toISOString();
+    const doc = {
+      id: existing ? existing.id : Date.now().toString(),
+      username,
+      rating,
+      reviewText,
+      createdAt: existing ? existing.createdAt : now,
+      updatedAt: now
+    };
+    await reviewsCollection.updateOne({ username }, { $set: doc }, { upsert: true });
+    res.json(doc);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
