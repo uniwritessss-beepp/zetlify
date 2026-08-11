@@ -44,6 +44,8 @@ let noticesCollection;
 let socialServicesCollection;
 let socialOrdersCollection;
 let cartCollection;
+let managersCollection;
+let reviewsCollection;
 
 // ─── SUBSCRIPTION COSTS (Monthly) ──────────────────────────
 const SUBSCRIPTION_COSTS = {
@@ -81,8 +83,21 @@ async function connectDB() {
   socialServicesCollection = db.collection('socialServices');
   socialOrdersCollection = db.collection('socialOrders');
   cartCollection = db.collection('cart');
+  managersCollection = db.collection('managers');
+  reviewsCollection = db.collection('reviews');
   await ensureAuthSecret(); // load or create the server-only token-signing secret
   await ensureCredKey(); // load or create the server-only customer-password encryption key
+  // One review per customer — resubmitting updates their existing review
+  // instead of creating a duplicate.
+  // Reviews used to be limited to one per customer (enforced by a unique
+  // index on username) — that's no longer the rule, so drop the old
+  // index if it's still there from before, and use a plain (non-unique)
+  // one just to keep username lookups fast.
+  try { await reviewsCollection.dropIndex('username_1'); } catch (e) { /* fine if it never existed */ }
+  try { await reviewsCollection.createIndex({ username: 1 }); } catch (e) { console.error('⚠️ reviews index failed:', e.message); }
+  // Reviews are always fetched sorted newest-first — index it so that
+  // sort doesn't have to be done in memory as the list grows.
+  try { await reviewsCollection.createIndex({ createdAt: -1 }); } catch (e) { console.error('⚠️ reviews createdAt index failed:', e.message); }
   console.log('✅ Connected to MongoDB');
 }
 
@@ -280,6 +295,108 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
+// Gate for customer-only actions (e.g. posting a review) — must be a
+// logged-in customer account specifically, not an admin/manager token.
+function requireUser(req, res, next) {
+  const auth = getAuth(req);
+  if (!auth || auth.r !== 'user') {
+    return res.status(401).json({ error: 'Please log in to do that' });
+  }
+  req.authUsername = auth.u;
+  next();
+}
+
+// ─── Manager accounts (limited-access admin helpers) ─────────────────
+// The admin panel has 15 sections (tabs). Only the real admin can create a
+// manager account, and only the admin decides — per manager — which of
+// those 15 sections that manager can even see, and within a section,
+// which specific actions (add / edit / delete / etc, where that section
+// has more than one) they're allowed to perform. Anything not explicitly
+// granted stays completely hidden and is also rejected server-side if
+// someone tried to call the API directly, so hiding a button in the UI is
+// never the only thing standing between a manager and an action they
+// weren't given.
+//
+// A manager's permissions look like:
+//   { subscriptions: { enabled: true, options: { add: true, edit: false, delete: false } },
+//     income:        { enabled: false, options: {} },
+//     ... }
+// `enabled: true` with no options granted still lets a manager view that
+// section (e.g. just look at Income) without being able to change anything
+// in it, for sections that have optional sub-actions.
+const MANAGER_SECTIONS = {
+  overview:     { label: 'Overview',        options: {} },
+  search:       { label: 'Search',          options: {} },
+  subscriptions:{ label: 'Subscriptions',   options: { add: 'Add subscription', edit: 'Edit subscription', delete: 'Delete subscription' } },
+  grid:         { label: 'Account Grid',    options: {} },
+  customers:    { label: 'Customers',       options: { edit: 'Edit customer', delete: 'Delete customer' } },
+  waiting:      { label: 'Waiting Customers', options: { delete: 'Remove from waiting list', grant: 'Fulfill custom grant' } },
+  income:       { label: 'Income',          options: {} },
+  users:        { label: 'Users',           options: { addCredits: 'Add credits', delete: 'Delete user' } },
+  deals:        { label: 'Deals',           options: { add: 'Add deal', edit: 'Edit deal', delete: 'Delete deal' } },
+  promotions:   { label: 'Promotions',      options: { add: 'Add promotion', edit: 'Edit promotion', delete: 'Delete promotion' } },
+  faqs:         { label: 'Help & FAQs',     options: { add: 'Add FAQ', delete: 'Delete FAQ' } },
+  otp:          { label: 'OTP Logs',        options: {} },
+  broadcast:    { label: 'Broadcast',       options: { send: 'Send notice', delete: 'Delete notice' } },
+  social:       { label: 'Social Media',    options: { manageServices: 'Manage services', manageOrders: 'Manage orders' } },
+  theme:        { label: 'Theme',           options: {} },
+};
+
+// Fills in a full, well-formed permissions object from whatever partial
+// object the admin sent (or nothing at all) — every known section present,
+// unknown sections/options dropped, so a manager document is never missing
+// a key the frontend expects or holding onto a stale one from a section
+// that no longer exists.
+function normalizeManagerPermissions(input) {
+  const src = (input && typeof input === 'object') ? input : {};
+  const out = {};
+  for (const key of Object.keys(MANAGER_SECTIONS)) {
+    const s = src[key] || {};
+    const options = {};
+    for (const optKey of Object.keys(MANAGER_SECTIONS[key].options)) {
+      options[optKey] = !!(s.options && s.options[optKey]);
+    }
+    out[key] = { enabled: !!s.enabled, options };
+  }
+  return out;
+}
+
+// True if this request is allowed to act on `section` (and, if given, the
+// specific `option` within it). Admin is always allowed. A manager must
+// have that exact grant on file — looked up fresh from the database every
+// time (not trusted from the token) so revoking access takes effect on the
+// manager's very next request, not just their next login.
+async function managerHasAccess(username, section, option) {
+  const mgr = await managersCollection.findOne({ _id: username });
+  if (!mgr || !mgr.active) return false;
+  const perm = mgr.permissions && mgr.permissions[section];
+  if (!perm || !perm.enabled) return false;
+  if (option && !(perm.options && perm.options[option])) return false;
+  return true;
+}
+
+// Route guard: use in place of `requireAdmin` for an endpoint that belongs
+// to one of the 15 manager-visible sections. Pass the option name too when
+// the section has more than one distinct action (add/edit/delete/etc) so a
+// manager granted "view only" (or just one of those actions) can't reach
+// the others through the raw API even though the button is hidden for them.
+function requireAccess(section, option) {
+  return async (req, res, next) => {
+    try {
+      const auth = getAuth(req);
+      if (!auth) return res.status(401).json({ error: 'Login required' });
+      if (auth.r === 'admin') return next();
+      if (auth.r === 'manager') {
+        const ok = await managerHasAccess(auth.u, section, option);
+        if (ok) return next();
+        return res.status(403).json({ error: 'You do not have permission for this action' });
+      }
+      return res.status(401).json({ error: 'Admin login required' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+}
 
 // Short-lived, single-purpose token proving "this caller just verified
 // their WhatsApp number matches this username" — issued by
@@ -396,6 +513,22 @@ app.post('/api/admin/login', async (req, res) => {
 app.put('/api/admin/settings', async (req, res) => {
   try {
     const { password, recoveryNumber, theme } = req.body;
+    const auth = getAuth(req);
+    const changingSecret = (password !== undefined && password !== '') || recoveryNumber !== undefined;
+    // Password and recovery number are true admin secrets — a manager must
+    // never be able to change either, no matter what sections they were
+    // granted, since the recovery number alone can be used to reset the
+    // admin password from the login screen. Theme is purely cosmetic and
+    // site-wide, so any authenticated admin OR manager may still change it
+    // (whether a manager actually reaches this depends on whether the
+    // admin granted them the Theme section in the first place).
+    if (changingSecret) {
+      if (!auth || auth.r !== 'admin') {
+        return res.status(401).json({ error: 'Admin login required' });
+      }
+    } else if (!auth || (auth.r !== 'admin' && auth.r !== 'manager')) {
+      return res.status(401).json({ error: 'Login required' });
+    }
     const update = {};
     if (password !== undefined && password !== '') update.password = hashPassword(password);
     if (recoveryNumber !== undefined) update.recoveryNumber = recoveryNumber;
@@ -757,7 +890,7 @@ app.get('/api/subscriptions/:id', async (req, res) => {
   }
 });
 
-app.post('/api/subscriptions', requireAdmin, async (req, res) => {
+app.post('/api/subscriptions', requireAccess('subscriptions', 'add'), async (req, res) => {
   try {
     const { id, name, type, accounts, costPerMonth, sellingPrice, slots, askFor, description, importantNote, logo } = req.body;
     const existing = await subscriptionsCollection.findOne({ id });
@@ -817,7 +950,7 @@ function dedupeAccounts(accounts) {
   return order;
 }
 
-app.put('/api/subscriptions/:id', requireAdmin, async (req, res) => {
+app.put('/api/subscriptions/:id', requireAccess('subscriptions', 'edit'), async (req, res) => {
   try {
     const { name, type, accounts, costPerMonth, sellingPrice, slots, askFor, description, importantNote, logo } = req.body;
     const update = {};
@@ -848,7 +981,7 @@ app.put('/api/subscriptions/:id', requireAdmin, async (req, res) => {
 // One-click cleanup for subscriptions that already have duplicate accounts
 // from before this guard existed — re-runs the same dedupe against
 // whatever's currently saved and reports how many were merged away.
-app.post('/api/subscriptions/:id/dedupe-accounts', requireAdmin, async (req, res) => {
+app.post('/api/subscriptions/:id/dedupe-accounts', requireAccess('subscriptions', 'edit'), async (req, res) => {
   try {
     const sub = await subscriptionsCollection.findOne({ id: req.params.id });
     if (!sub) return res.status(404).json({ error: 'Not found' });
@@ -865,7 +998,7 @@ app.post('/api/subscriptions/:id/dedupe-accounts', requireAdmin, async (req, res
   }
 });
 
-app.delete('/api/subscriptions/:id', requireAdmin, async (req, res) => {
+app.delete('/api/subscriptions/:id', requireAccess('subscriptions', 'delete'), async (req, res) => {
   try {
     const result = await subscriptionsCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) {
@@ -937,7 +1070,7 @@ app.post('/api/subscriptions/:id/allocate', async (req, res) => {
   }
 });
 
-app.put('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username', requireAdmin, async (req, res) => {
+app.put('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username', requireAccess('customers', 'edit'), async (req, res) => {
   try {
     const { name, password, whatsapp, expiryDate, months, days, email, newUsername } = req.body;
     const setObj = {};
@@ -976,7 +1109,7 @@ app.put('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/
   }
 });
 
-app.delete('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username', requireAdmin, async (req, res) => {
+app.delete('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username', requireAccess('customers', 'delete'), async (req, res) => {
   try {
     const result = await subscriptionsCollection.updateOne(
       { id: req.params.id },
@@ -1089,7 +1222,7 @@ app.post('/api/users/verify-whatsapp', async (req, res) => {
   }
 });
 
-app.get('/api/users', requireAdmin, async (req, res) => {
+app.get('/api/users', requireAccess('users'), async (req, res) => {
   try {
     const users = await usersCollection.find({}).toArray();
     const sanitized = users.map(u => {
@@ -1141,7 +1274,7 @@ app.put('/api/users/:username/incrementPurchase', async (req, res) => {
   }
 });
 
-app.post('/api/users/:username/addCredits', requireAdmin, async (req, res) => {
+app.post('/api/users/:username/addCredits', requireAccess('users', 'addCredits'), async (req, res) => {
   try {
     const { amount, reason } = req.body;
     if (!amount || amount <= 0) {
@@ -1269,7 +1402,7 @@ app.post('/api/users/:username/deductCredits', async (req, res) => {
 
 // Delete a user account (login credentials only — their existing purchased
 // subscription entries are left untouched; remove those separately if needed).
-app.delete('/api/users/:username', requireAdmin, async (req, res) => {
+app.delete('/api/users/:username', requireAccess('users', 'delete'), async (req, res) => {
   try {
     const result = await usersCollection.deleteOne({ username: req.params.username });
     if (result.deletedCount === 0) {
@@ -1349,7 +1482,7 @@ app.get('/api/deals/active', async (req, res) => {
   }
 });
 
-app.post('/api/deals', requireAdmin, async (req, res) => {
+app.post('/api/deals', requireAccess('deals', 'add'), async (req, res) => {
   try {
     const { id, subscriptionIds, title, description, actualPrice, discountPrice, active,
       socialPlatformId, socialPlatformName, socialServiceId, socialServiceName, socialQuantity } = req.body;
@@ -1393,7 +1526,7 @@ app.post('/api/deals', requireAdmin, async (req, res) => {
   }
 });
 
-app.put('/api/deals/:id', requireAdmin, async (req, res) => {
+app.put('/api/deals/:id', requireAccess('deals', 'edit'), async (req, res) => {
   try {
     const { subscriptionIds, title, description, actualPrice, discountPrice, active,
       socialPlatformId, socialPlatformName, socialServiceId, socialServiceName, socialQuantity } = req.body;
@@ -1423,7 +1556,7 @@ app.put('/api/deals/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/deals/:id', requireAdmin, async (req, res) => {
+app.delete('/api/deals/:id', requireAccess('deals', 'delete'), async (req, res) => {
   try {
     const result = await dealsCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) {
@@ -1449,7 +1582,7 @@ app.get('/api/social-services', async (req, res) => {
   }
 });
 
-app.post('/api/social-services', requireAdmin, async (req, res) => {
+app.post('/api/social-services', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const { id, name, icon, logo, description } = req.body;
     if (!id || !name) return res.status(400).json({ error: 'Platform name is required' });
@@ -1463,7 +1596,7 @@ app.post('/api/social-services', requireAdmin, async (req, res) => {
   }
 });
 
-app.put('/api/social-services/:id', requireAdmin, async (req, res) => {
+app.put('/api/social-services/:id', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const { name, icon, logo, description } = req.body;
     const update = {};
@@ -1480,7 +1613,7 @@ app.put('/api/social-services/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/social-services/:id', requireAdmin, async (req, res) => {
+app.delete('/api/social-services/:id', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const result = await socialServicesCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) return res.status(404).json({ error: 'Platform not found' });
@@ -1493,7 +1626,7 @@ app.delete('/api/social-services/:id', requireAdmin, async (req, res) => {
 // A service's requiredFields is a subset of ['accountLink','videoLink'] —
 // whatever's listed there is what the customer gets asked for before they
 // can send the order.
-app.post('/api/social-services/:id/services', requireAdmin, async (req, res) => {
+app.post('/api/social-services/:id/services', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const { name, costPrice, sellingPrice, requiredFields } = req.body;
     if (!name) return res.status(400).json({ error: 'Service name is required' });
@@ -1515,7 +1648,7 @@ app.post('/api/social-services/:id/services', requireAdmin, async (req, res) => 
   }
 });
 
-app.put('/api/social-services/:id/services/:serviceId', requireAdmin, async (req, res) => {
+app.put('/api/social-services/:id/services/:serviceId', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const { name, costPrice, sellingPrice, requiredFields, active } = req.body;
     const platform = await socialServicesCollection.findOne({ id: req.params.id });
@@ -1539,7 +1672,7 @@ app.put('/api/social-services/:id/services/:serviceId', requireAdmin, async (req
   }
 });
 
-app.delete('/api/social-services/:id/services/:serviceId', requireAdmin, async (req, res) => {
+app.delete('/api/social-services/:id/services/:serviceId', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const platform = await socialServicesCollection.findOne({ id: req.params.id });
     if (!platform) return res.status(404).json({ error: 'Platform not found' });
@@ -1557,7 +1690,7 @@ app.delete('/api/social-services/:id/services/:serviceId', requireAdmin, async (
 // offer Lifetime Warranty / Non-Refill / 6 Month Warranty variations, each
 // with its own price and required link). Services with no variations keep
 // working exactly as before, priced and ordered directly.
-app.post('/api/social-services/:id/services/:serviceId/variations', requireAdmin, async (req, res) => {
+app.post('/api/social-services/:id/services/:serviceId/variations', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const { name, costPrice, sellingPrice, requiredFields } = req.body;
     if (!name) return res.status(400).json({ error: 'Variation name is required' });
@@ -1584,7 +1717,7 @@ app.post('/api/social-services/:id/services/:serviceId/variations', requireAdmin
   }
 });
 
-app.put('/api/social-services/:id/services/:serviceId/variations/:variationId', requireAdmin, async (req, res) => {
+app.put('/api/social-services/:id/services/:serviceId/variations/:variationId', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const { name, costPrice, sellingPrice, requiredFields, active } = req.body;
     const platform = await socialServicesCollection.findOne({ id: req.params.id });
@@ -1612,7 +1745,7 @@ app.put('/api/social-services/:id/services/:serviceId/variations/:variationId', 
   }
 });
 
-app.delete('/api/social-services/:id/services/:serviceId/variations/:variationId', requireAdmin, async (req, res) => {
+app.delete('/api/social-services/:id/services/:serviceId/variations/:variationId', requireAccess('social', 'manageServices'), async (req, res) => {
   try {
     const platform = await socialServicesCollection.findOne({ id: req.params.id });
     if (!platform) return res.status(404).json({ error: 'Platform not found' });
@@ -1631,7 +1764,7 @@ app.delete('/api/social-services/:id/services/:serviceId/variations/:variationId
 // Customers don't need an account to order — same as the rest of the
 // site's WhatsApp-driven flow, this just also keeps a record the admin
 // can see and track from the dashboard.
-app.get('/api/social-orders', requireAdmin, async (req, res) => {
+app.get('/api/social-orders', requireAccess('social'), async (req, res) => {
   try {
     const orders = await socialOrdersCollection.find({}).sort({ createdAt: -1 }).toArray();
     res.json(orders);
@@ -1682,7 +1815,7 @@ app.get('/api/social-orders/user/:username', async (req, res) => {
   }
 });
 
-app.put('/api/social-orders/:id', requireAdmin, async (req, res) => {
+app.put('/api/social-orders/:id', requireAccess('social', 'manageOrders'), async (req, res) => {
   try {
     const { status } = req.body;
     const update = {};
@@ -1696,7 +1829,7 @@ app.put('/api/social-orders/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/social-orders/:id', requireAdmin, async (req, res) => {
+app.delete('/api/social-orders/:id', requireAccess('social', 'manageOrders'), async (req, res) => {
   try {
     const result = await socialOrdersCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) return res.status(404).json({ error: 'Order not found' });
@@ -1908,7 +2041,7 @@ app.post('/api/otp/verify', async (req, res) => {
   }
 });
 
-app.get('/api/otp/list', requireAdmin, async (req, res) => {
+app.get('/api/otp/list', requireAccess('otp'), async (req, res) => {
   try {
     const list = await otpsCollection.find({})
       .sort({ createdAt: -1 })
@@ -1930,7 +2063,7 @@ app.get('/api/promotions', async (req, res) => {
   }
 });
 
-app.post('/api/promotions', requireAdmin, async (req, res) => {
+app.post('/api/promotions', requireAccess('promotions', 'add'), async (req, res) => {
   try {
     const { id, heading, image, active } = req.body;
     if (!id || !heading || !image) {
@@ -1954,7 +2087,7 @@ app.post('/api/promotions', requireAdmin, async (req, res) => {
   }
 });
 
-app.put('/api/promotions/:id', requireAdmin, async (req, res) => {
+app.put('/api/promotions/:id', requireAccess('promotions', 'edit'), async (req, res) => {
   try {
     const { heading, image, active } = req.body;
     const update = {};
@@ -1975,7 +2108,7 @@ app.put('/api/promotions/:id', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/promotions/:id', requireAdmin, async (req, res) => {
+app.delete('/api/promotions/:id', requireAccess('promotions', 'delete'), async (req, res) => {
   try {
     const result = await promotionsCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) {
@@ -1996,7 +2129,7 @@ app.delete('/api/promotions/:id', requireAdmin, async (req, res) => {
 // Either way, nothing is auto-removed: the admin sees it here until they
 // manually mark it fulfilled once the account has been created and given
 // to the customer.
-app.get('/api/waiting', requireAdmin, async (req, res) => {
+app.get('/api/waiting', requireAccess('waiting'), async (req, res) => {
   try {
     const list = await waitingCollection.find({}).sort({ createdAt: -1 }).toArray();
     res.json(list);
@@ -2062,11 +2195,103 @@ app.post('/api/waiting', async (req, res) => {
   }
 });
 
-app.delete('/api/waiting/:id', requireAdmin, async (req, res) => {
+app.delete('/api/waiting/:id', requireAccess('waiting', 'delete'), async (req, res) => {
   try {
     const result = await waitingCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: 'Waiting entry not found' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Customer Reviews ----
+// Public read (anyone, logged in or not, can see reviews). Posting one
+// requires a logged-in customer account. A customer can post more than
+// one review — each submission adds a new review rather than overwriting
+// a previous one.
+app.get('/api/reviews', async (req, res) => {
+  try {
+    const list = await reviewsCollection.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/reviews', requireUser, async (req, res) => {
+  try {
+    const rating = parseInt(req.body.rating, 10);
+    const reviewText = (req.body.reviewText || '').toString().trim();
+    // Both required together: a rating with no review, or a review with
+    // no rating, are both rejected here — not just discouraged client-side.
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Please select a rating from 1 to 5 stars' });
+    }
+    if (!reviewText) {
+      return res.status(400).json({ error: 'Please write a review along with your rating' });
+    }
+    const username = req.authUsername;
+    const now = new Date().toISOString();
+    const doc = {
+      id: Date.now().toString(),
+      username,
+      rating,
+      reviewText,
+      createdAt: now,
+      updatedAt: now
+    };
+    await reviewsCollection.insertOne(doc);
+    res.json(doc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin-only — lets the admin post a review directly (rating + text +
+// whatever name should show with it), without needing a matching
+// logged-in customer account.
+app.post('/api/reviews/admin', requireAdmin, async (req, res) => {
+  try {
+    const rating = parseInt(req.body.rating, 10);
+    const reviewText = (req.body.reviewText || '').toString().trim();
+    const username = (req.body.username || '').toString().trim();
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Please select a rating from 1 to 5 stars' });
+    }
+    if (!reviewText) {
+      return res.status(400).json({ error: 'Please write the review text' });
+    }
+    if (!username) {
+      return res.status(400).json({ error: 'Please enter a name to show with the review' });
+    }
+    const now = new Date().toISOString();
+    const doc = {
+      id: Date.now().toString(),
+      username,
+      rating,
+      reviewText,
+      createdAt: now,
+      updatedAt: now
+    };
+    await reviewsCollection.insertOne(doc);
+    res.json(doc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin-only — removes a review outright (e.g. spam, abusive language,
+// or a customer's request to take it down). No "soft delete" — once
+// removed it's gone, matching how deals/promotions/users are deleted
+// elsewhere in the admin panel.
+app.delete('/api/reviews/:id', requireAdmin, async (req, res) => {
+  try {
+    const result = await reviewsCollection.deleteOne({ id: req.params.id });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Review not found' });
     }
     res.json({ success: true });
   } catch (err) {
@@ -2084,7 +2309,7 @@ app.get('/api/faqs', async (req, res) => {
   }
 });
 
-app.post('/api/faqs', requireAdmin, async (req, res) => {
+app.post('/api/faqs', requireAccess('faqs', 'add'), async (req, res) => {
   try {
     const { question, answer, category } = req.body;
     if (!question || !answer) {
@@ -2104,7 +2329,7 @@ app.post('/api/faqs', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/faqs/:id', requireAdmin, async (req, res) => {
+app.delete('/api/faqs/:id', requireAccess('faqs', 'delete'), async (req, res) => {
   try {
     const result = await faqsCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) {
@@ -2134,7 +2359,7 @@ app.get('/api/notices', async (req, res) => {
   }
 });
 
-app.post('/api/notices', async (req, res) => {
+app.post('/api/notices', requireAccess('broadcast', 'send'), async (req, res) => {
   try {
     const auth = getAuth(req);
     if (!auth || auth.r !== 'admin') return res.status(401).json({ error: 'Admin login required' });
@@ -2148,7 +2373,7 @@ app.post('/api/notices', async (req, res) => {
   }
 });
 
-app.delete('/api/notices/:id', async (req, res) => {
+app.delete('/api/notices/:id', requireAccess('broadcast', 'delete'), async (req, res) => {
   try {
     const auth = getAuth(req);
     if (!auth || auth.r !== 'admin') return res.status(401).json({ error: 'Admin login required' });
@@ -2288,7 +2513,7 @@ app.get('/api/custom-grants', async (req, res) => {
   }
 });
 
-app.post('/api/custom-grants', requireAdmin, async (req, res) => {
+app.post('/api/custom-grants', requireAccess('waiting', 'grant'), async (req, res) => {
   try {
     const {
       username, name, whatsapp, subscriptionName, email, password, notes,
@@ -2344,7 +2569,7 @@ app.post('/api/custom-grants', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/custom-grants/:id', requireAdmin, async (req, res) => {
+app.delete('/api/custom-grants/:id', requireAccess('waiting', 'grant'), async (req, res) => {
   try {
     const result = await customGrantsCollection.deleteOne({ id: req.params.id });
     if (result.deletedCount === 0) {
@@ -2361,7 +2586,7 @@ app.delete('/api/custom-grants/:id', requireAdmin, async (req, res) => {
 // sellingPrice = what YOU charge the customer (your revenue).
 // profit = revenue - cost. All three are reported separately, plus a
 // breakdown by subscription type and an optional custom date range.
-app.get('/api/income', requireAdmin, async (req, res) => {
+app.get('/api/income', requireAccess('income'), async (req, res) => {
   try {
     const { period, startDate: customStart, endDate: customEnd } = req.query;
     const now = new Date();
@@ -2520,6 +2745,136 @@ app.get('/api/income', requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 
+});
+
+// ─── Manager accounts ─────────────────────────────────────────────
+// Never expose a manager's password hash to the browser.
+function sanitizeManager(mgr) {
+  if (!mgr) return mgr;
+  const { password, ...safe } = mgr;
+  return safe;
+}
+
+// List of the 15 sections and their optional sub-actions, so the admin's
+// "create/edit manager" screen can build its checkboxes without hardcoding
+// the list on the frontend too.
+app.get('/api/managers/sections', requireAdmin, (req, res) => {
+  res.json(MANAGER_SECTIONS);
+});
+
+app.get('/api/managers', requireAdmin, async (req, res) => {
+  try {
+    const managers = await managersCollection.find({}).toArray();
+    res.json(managers.map(sanitizeManager));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/managers', requireAdmin, async (req, res) => {
+  try {
+    const { username, password, permissions, name } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+    const clean = String(username).trim().toLowerCase();
+    if (!clean) return res.status(400).json({ error: 'Username and password are required' });
+    const existing = await managersCollection.findOne({ _id: clean });
+    if (existing) return res.status(409).json({ error: 'A manager with this username already exists' });
+    const doc = {
+      _id: clean,
+      name: (name && name.trim()) || username.trim(),
+      password: hashPassword(password),
+      permissions: normalizeManagerPermissions(permissions),
+      active: true,
+      createdAt: new Date(),
+    };
+    await managersCollection.insertOne(doc);
+    res.json({ success: true, manager: sanitizeManager(doc) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update a manager's permissions and/or password and/or active state.
+// Password is optional here — omit it to leave the existing one in place.
+app.put('/api/managers/:username', requireAdmin, async (req, res) => {
+  try {
+    const clean = String(req.params.username).trim().toLowerCase();
+    const mgr = await managersCollection.findOne({ _id: clean });
+    if (!mgr) return res.status(404).json({ error: 'Manager not found' });
+    const { password, permissions, active } = req.body;
+    const update = {};
+    if (permissions !== undefined) update.permissions = normalizeManagerPermissions(permissions);
+    if (password !== undefined && password !== '') update.password = hashPassword(password);
+    if (active !== undefined) update.active = !!active;
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
+    await managersCollection.updateOne({ _id: clean }, { $set: update });
+    const updated = await managersCollection.findOne({ _id: clean });
+    res.json({ success: true, manager: sanitizeManager(updated) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/managers/:username', requireAdmin, async (req, res) => {
+  try {
+    const clean = String(req.params.username).trim().toLowerCase();
+    await managersCollection.deleteOne({ _id: clean });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manager login: same shape as admin login (password checked server-side,
+// only a signed token comes back), but the token carries role 'manager'
+// instead of 'admin', so every downstream permission check treats it
+// differently and looks up that manager's specific grants.
+app.post('/api/manager/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Username and password are required' });
+    }
+    const clean = String(username).trim().toLowerCase();
+    const mgr = await managersCollection.findOne({ _id: clean });
+    if (!mgr || !mgr.active || !verifyPassword(password, mgr.password)) {
+      return res.status(401).json({ success: false, error: 'Invalid username or password' });
+    }
+    res.json({ success: true, token: signToken({ u: clean, r: 'manager' }) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lets the logged-in manager's own browser fetch their current, live
+// permission set (so the UI shows/hides the right sections and buttons),
+// and works for the admin too (who implicitly has everything).
+app.get('/api/manager/me', async (req, res) => {
+  try {
+    const auth = getAuth(req);
+    if (!auth) return res.status(401).json({ error: 'Login required' });
+    if (auth.r === 'admin') {
+      const all = {};
+      for (const key of Object.keys(MANAGER_SECTIONS)) {
+        const options = {};
+        for (const optKey of Object.keys(MANAGER_SECTIONS[key].options)) options[optKey] = true;
+        all[key] = { enabled: true, options };
+      }
+      return res.json({ username: 'admin', role: 'admin', name: 'Mutahhar', permissions: all });
+    }
+    if (auth.r === 'manager') {
+      const mgr = await managersCollection.findOne({ _id: auth.u });
+      if (!mgr || !mgr.active) return res.status(401).json({ error: 'Manager account no longer active' });
+      return res.json({ username: mgr._id, role: 'manager', name: mgr.name || mgr._id, permissions: normalizeManagerPermissions(mgr.permissions) });
+    }
+    return res.status(401).json({ error: 'Admin or manager login required' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ---- Health ----

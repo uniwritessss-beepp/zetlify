@@ -1651,10 +1651,67 @@
     const AppContext = createContext();
     const UserContext = createContext();
 
+    // Shown right after a purchase completes (and available from the
+    // customer portal too) — a quick star rating + text box that posts
+    // straight to the reviews list. "Maybe Later" just closes it; nothing
+    // is forced.
+    function ReviewPromptModal({ open, onClose }) {
+      const { addToast } = useContext(AppContext);
+      const { user } = useContext(UserContext);
+      const [rating, setRating] = useState(0);
+      const [text, setText] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+
+      useEffect(() => {
+        if (open) { setRating(0); setText(''); }
+      }, [open]);
+
+      if (!open || !user) return null;
+
+      const handleSubmit = async () => {
+        if (!rating) { addToast('Please select a star rating', 'error'); return; }
+        if (!text.trim()) { addToast('Please write a quick review along with your rating', 'error'); return; }
+        setSubmitting(true);
+        try {
+          await submitReview(rating, text.trim());
+          addToast('Thanks for your review!', 'success');
+          onClose();
+        } catch (err) {
+          addToast((err && err.error) || 'Failed to submit review', 'error');
+        } finally {
+          setSubmitting(false);
+        }
+      };
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal-content glass-panel" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl font-bold text-white mb-1"><i className="fas fa-star text-yellow-400 mr-2"></i> How was your purchase?</h3>
+            <p className="text-white/40 text-sm mb-4">We'd love to hear about your experience — give us a review!</p>
+            <StarRatingInput value={rating} onChange={setRating} />
+            {rating > 0 && (
+              <div className="review-textarea-wrap mt-4">
+                <textarea value={text} onChange={(e) => setText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..." autoFocus></textarea>
+                <button onClick={handleSubmit} disabled={submitting || !rating || !text.trim()} className="btn-neon w-full py-3 mt-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                  {submitting ? <span className="spinner"></span> : 'Submit Review'}
+                </button>
+              </div>
+            )}
+            <button onClick={onClose} className="btn-neon-outline w-full mt-3">Maybe Later</button>
+          </div>
+        </div>
+      );
+    }
+
     function AppProvider({ children }) {
       const [toasts, setToasts] = useState([]);
       const [loading, setLoading] = useState(false);
       const [isAdmin, setIsAdmin] = useState(false);
+      // Shows the "Give us a review" prompt right after a purchase
+      // completes — any component can trigger it via promptForReview()
+      // from AppContext without needing the modal wired into its own tree.
+      const [reviewPromptOpen, setReviewPromptOpen] = useState(false);
+      const promptForReview = () => setReviewPromptOpen(true);
       // Whether a recovery number is set (a flag only). The actual admin
       // password and recovery number now live only on the server and are
       // never downloaded to the browser.
@@ -1743,9 +1800,10 @@
       };
 
       return (
-        <AppContext.Provider value={{ toasts, addToast, removeToast, loading, setLoading, isAdmin, setIsAdmin, recoveryNumber, setRecoveryNumber, syncAdminSettings, theme, changeTheme }}>
+        <AppContext.Provider value={{ toasts, addToast, removeToast, loading, setLoading, isAdmin, setIsAdmin, recoveryNumber, setRecoveryNumber, syncAdminSettings, theme, changeTheme, promptForReview }}>
           <UserContext.Provider value={{ user, setUser, refreshUser }}>
             {children}
+            <ReviewPromptModal open={reviewPromptOpen} onClose={() => setReviewPromptOpen(false)} />
           </UserContext.Provider>
         </AppContext.Provider>
       );
@@ -3403,7 +3461,7 @@
     // plus a record saved server-side so the admin can track it from the
     // dashboard even before they open WhatsApp.
     function SocialOrderModal({ open, platform, onClose, user, dealOverride, onCartChanged, requireAuth }) {
-      const { addToast } = useContext(AppContext);
+      const { addToast, promptForReview } = useContext(AppContext);
       const { setUser } = useContext(UserContext);
       const [step, setStep] = useState('service'); // 'service' | 'variation' | 'details'
       const [selectedService, setSelectedService] = useState(null);
@@ -3550,6 +3608,7 @@
           }).catch((err) => console.error('Failed to save social order record:', err));
 
           addToast(`${price} credits deducted — your order is in! We'll get started shortly.`, 'success');
+          promptForReview();
           onClose();
         } catch (err) {
           addToast('Failed to place order: ' + (err?.error || 'unknown error'), 'error');
@@ -4150,7 +4209,7 @@
       const [specificScreen, setSpecificScreen] = useState(false);
       const [selectedScreenId, setSelectedScreenId] = useState('');
       const [sameAccount, setSameAccount] = useState(false);
-      const { addToast } = useContext(AppContext);
+      const { addToast, promptForReview } = useContext(AppContext);
       const { user: currentUser, setUser } = useContext(UserContext);
       // Guards against double-purchase from a double-click/double-tap on the
       // purchase button. This is a ref (not state) checked synchronously at
@@ -4282,6 +4341,7 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${subscription.name}`, { subscriptionId: subscription.id, months: totalMonths, screens });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted. Subscription activated!`, 'success');
+            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -4442,7 +4502,7 @@
       const [step, setStep] = useState('plan');
       const [whatsapp, setWhatsapp] = useState(user?.whatsapp || '');
       const [loading, setLoading] = useState(false);
-      const { addToast } = useContext(AppContext);
+      const { addToast, promptForReview } = useContext(AppContext);
       const { user: currentUser, setUser } = useContext(UserContext);
       const isSubmittingRef = useRef(false);
 
@@ -4520,6 +4580,7 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${subscription.name}`, { subscriptionId: subscription.id, months: totalMonths });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted.`, 'success');
+            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -4642,7 +4703,7 @@
       const [email, setEmail] = useState('');
       const [customSubName, setCustomSubName] = useState('');
       const [loading, setLoading] = useState(false);
-      const { addToast } = useContext(AppContext);
+      const { addToast, promptForReview } = useContext(AppContext);
       const { user: currentUser, setUser } = useContext(UserContext);
       const isSubmittingRef = useRef(false);
 
@@ -4729,6 +4790,7 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${subscription.name}`, { subscriptionId: subscription.id, months });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted.`, 'success');
+            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -4881,7 +4943,7 @@
       const [step, setStep] = useState('plan');
       const [whatsapp, setWhatsapp] = useState(user?.whatsapp || '');
       const [loading, setLoading] = useState(false);
-      const { addToast } = useContext(AppContext);
+      const { addToast, promptForReview } = useContext(AppContext);
       const { user: currentUser, setUser } = useContext(UserContext);
       const isSubmittingRef = useRef(false);
 
@@ -4915,6 +4977,7 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${deal.title}`, { dealId: deal.id });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted.`, 'success');
+            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -5604,7 +5667,7 @@
     }
 
     function CustomerDashboard({ customerData, onLogout, onBack, deals, onDealPurchase, subscriptions, cartItems, onOpenCart }) {
-      const { addToast } = useContext(AppContext);
+      const { addToast, promptForReview } = useContext(AppContext);
       const { user, refreshUser } = useContext(UserContext);
       const [userCredits, setUserCredits] = useState(user?.credits || 0);
       const [showCreditHistory, setShowCreditHistory] = useState(false);
@@ -5761,6 +5824,7 @@
             {renderDealsSection()}
             <button onClick={onBack} className="text-red-400 hover:text-red-300 font-bold text-base inline-flex items-center"><i className="fas fa-arrow-left mr-2"></i> Back</button>
             <NotesBoard username={user?.username} />
+            <button onClick={promptForReview} className="btn-neon-outline text-sm inline-flex items-center gap-2 w-fit"><i className="fas fa-star text-yellow-400"></i> Give us a Review</button>
             {renderSocialHistorySection()}
             <div className="glass-panel max-w-4xl mx-auto">
               <div className="mb-6">
@@ -5787,6 +5851,7 @@
             {renderDealsSection()}
             <button onClick={onBack} className="text-red-400 hover:text-red-300 font-bold text-base inline-flex items-center"><i className="fas fa-arrow-left mr-2"></i> Back</button>
             <NotesBoard username={user?.username} />
+            <button onClick={promptForReview} className="btn-neon-outline text-sm inline-flex items-center gap-2 w-fit"><i className="fas fa-star text-yellow-400"></i> Give us a Review</button>
             {renderSocialHistorySection()}
             <div className="glass-panel max-w-4xl mx-auto">
               <div className="mb-6">
@@ -5812,6 +5877,7 @@
           {renderDealsSection()}
           <button onClick={onBack} className="text-red-400 hover:text-red-300 font-bold text-base inline-flex items-center"><i className="fas fa-arrow-left mr-2"></i> Back</button>
           <NotesBoard username={user?.username} />
+          <button onClick={promptForReview} className="btn-neon-outline text-sm inline-flex items-center gap-2 w-fit"><i className="fas fa-star text-yellow-400"></i> Give us a Review</button>
           {renderSocialHistorySection()}
           <div className="glass-panel max-w-4xl mx-auto">
             <div className="mb-6">
@@ -7092,15 +7158,21 @@
 
     function ReviewsPage({ user, onLoginClick }) {
       const { addToast } = useContext(AppContext);
-      const [reviews, setReviews] = useState([]);
-      const [loading, setLoading] = useState(true);
+      // Cached reviews render immediately (same stale-while-revalidate
+      // pattern used for subscriptions/deals/faqs) instead of always
+      // showing a spinner while waiting on the network — the list then
+      // quietly refreshes in the background.
+      const [reviews, setReviews] = useState(() => readCache('reviews'));
+      const [loading, setLoading] = useState(() => readCache('reviews').length === 0);
       const [myRating, setMyRating] = useState(0);
       const [myText, setMyText] = useState('');
       const [submitting, setSubmitting] = useState(false);
 
       const load = () => {
-        setLoading(true);
-        fetchReviews().then(setReviews).finally(() => setLoading(false));
+        fetchReviews().then(list => {
+          setReviews(list);
+          writeCache('reviews', list);
+        }).finally(() => setLoading(false));
       };
 
       useEffect(() => { load(); }, [user]);
@@ -11317,7 +11389,7 @@
       const [loadingData, setLoadingData] = useState(() => readCache('subscriptions').length === 0);
       const [showIntro, setShowIntro] = useState(true);
       const [introFading, setIntroFading] = useState(false);
-      const { addToast, syncAdminSettings } = useContext(AppContext);
+      const { addToast, syncAdminSettings, promptForReview } = useContext(AppContext);
       const { user, setUser, refreshUser } = useContext(UserContext);
 
       // The polling effect below only runs its setup once (empty dependency
@@ -11729,6 +11801,7 @@
           setSocialCartItems([]);
           setShowSocialCart(false);
           addToast(`RS ${result.total} deducted — your ${result.itemCount} order${result.itemCount !== 1 ? 's are' : ' is'} in! We'll get started shortly.`, 'success');
+          promptForReview();
         } catch (err) {
           addToast(err?.message || 'Checkout failed', 'error');
         } finally {
