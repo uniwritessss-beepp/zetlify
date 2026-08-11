@@ -653,7 +653,7 @@
       try { const v = localStorage.getItem(key); if (v) return v; } catch (e) {}
       try { return sessionStorage.getItem(key); } catch (e) { return null; }
     };
-    const getAuthToken = () => readAuthToken('adminToken') || readAuthToken('authToken') || null;
+    const getAuthToken = () => readAuthToken('adminToken') || readAuthToken('managerToken') || readAuthToken('authToken') || null;
     const authHeaders = (base = {}) => {
       const token = getAuthToken();
       return token ? { ...base, 'Authorization': `Bearer ${token}` } : { ...base };
@@ -891,6 +891,75 @@
       // with the full, unmasked account credentials.
       if (success && data.token) saveAuthToken('adminToken', data.token);
       return { ...data, success };
+    };
+
+    // Manager login works the same way as admin login (password checked on
+    // the server, only a signed token comes back) but stores it under its
+    // own key so it never gets confused with a real admin session.
+    const loginManager = async (username, password) => {
+      const res = await fetch(`${API_BASE}/api/manager/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const success = res.ok && data.success;
+      if (success && data.token) saveAuthToken('managerToken', data.token);
+      return { ...data, success };
+    };
+
+    // Fetches whoever is currently logged in's live permissions (admin gets
+    // everything; a manager gets exactly what was granted to them, re-read
+    // from the server on every call so a revoked permission takes effect
+    // immediately without needing to log back in).
+    const fetchMyPermissions = async () => {
+      const res = await fetch(`${API_BASE}/api/manager/me`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Failed to load permissions');
+      return res.json();
+    };
+
+    const fetchManagerSections = async () => {
+      const res = await fetch(`${API_BASE}/api/managers/sections`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Failed to load sections');
+      return res.json();
+    };
+
+    const fetchManagers = async () => {
+      const res = await fetch(`${API_BASE}/api/managers`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Failed to load managers');
+      return res.json();
+    };
+
+    const createManager = async (username, password, permissions) => {
+      const res = await fetch(`${API_BASE}/api/managers`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ username, password, permissions }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to create manager');
+      return data;
+    };
+
+    const updateManager = async (username, updates) => {
+      const res = await fetch(`${API_BASE}/api/managers/${encodeURIComponent(username)}`, {
+        method: 'PUT',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to update manager');
+      return data;
+    };
+
+    const deleteManager = async (username) => {
+      const res = await fetch(`${API_BASE}/api/managers/${encodeURIComponent(username)}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to delete manager');
+      return data;
     };
 
     const updateAdminSettings = async (data) => {
@@ -5877,6 +5946,297 @@
       );
     }
 
+    // ─── MANAGER LOGIN ─────────────────────────────────────
+    // Separate, hidden login for limited-access manager accounts (created
+    // by the admin, each with their own username/password). Deliberately
+    // simple — no self-serve password recovery here; if a manager forgets
+    // their password, the admin resets it from the Managers tab.
+    function ManagerLogin({ onLogin }) {
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      const { addToast } = useContext(AppContext);
+
+      const handleSubmit = async () => {
+        if (!username.trim() || !password) { setError('Enter username and password'); return; }
+        setLoading(true);
+        try {
+          const result = await loginManager(username.trim(), password);
+          if (result.success) {
+            const me = await fetchMyPermissions();
+            setError('');
+            onLogin(me.permissions);
+            addToast('Welcome!', 'success');
+          } else {
+            setError(result.error || 'Invalid username or password');
+            addToast(result.error || 'Invalid username or password', 'error');
+          }
+        } catch (err) {
+          setError('Login failed. Please try again.');
+          addToast('Login failed. Please try again.', 'error');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="glass-panel max-w-sm mx-auto">
+          <div className="text-center mb-6">
+            <i className="fas fa-user-tie text-5xl text-red-400 neon-text"></i>
+            <h2 className="text-2xl font-bold text-white mt-3">Manager Access</h2>
+            <p className="text-white/40 text-sm">Enter your manager username and password.</p>
+          </div>
+          <div className="space-y-3">
+            <input type="text" autoCapitalize="none" autoCorrect="off" value={username} onChange={(e) => { setUsername(e.target.value); setError(''); }} className="input-neon" placeholder="Username" onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} />
+            <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(''); }} className="input-neon" placeholder="Password" onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} />
+            {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+            <button onClick={handleSubmit} disabled={loading} className="btn-neon w-full py-3 mt-2">
+              {loading ? <span className="spinner"></span> : <><i className="fas fa-lock-open mr-2"></i> Login</>}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── MANAGERS PANEL (admin-only) ──────────────────────────
+    // Lets the admin create manager accounts, each with their own
+    // username/password, and pick — per manager — exactly which of the 15
+    // admin sections they can see, and within a section that has more than
+    // one distinct action, which of those specific actions they're allowed
+    // to do. A section left unchecked is completely invisible to that
+    // manager, both in this UI and (independently) at the API.
+    function emptyManagerPermissions(sections) {
+      const out = {};
+      Object.keys(sections || {}).forEach(key => {
+        const options = {};
+        Object.keys(sections[key].options || {}).forEach(optKey => { options[optKey] = false; });
+        out[key] = { enabled: false, options };
+      });
+      return out;
+    }
+
+    function ManagerPermissionEditor({ sections, permissions, onChange }) {
+      const toggleSection = (key) => {
+        const cur = permissions[key] || { enabled: false, options: {} };
+        onChange({ ...permissions, [key]: { ...cur, enabled: !cur.enabled } });
+      };
+      const toggleOption = (key, optKey) => {
+        const cur = permissions[key] || { enabled: false, options: {} };
+        onChange({ ...permissions, [key]: { ...cur, options: { ...cur.options, [optKey]: !cur.options[optKey] } } });
+      };
+      return (
+        <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+          {Object.keys(sections).map(key => {
+            const sec = sections[key];
+            const perm = permissions[key] || { enabled: false, options: {} };
+            const optionKeys = Object.keys(sec.options || {});
+            return (
+              <div key={key} className="bg-black/20 rounded-lg p-3 border border-red-500/10">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!perm.enabled} onChange={() => toggleSection(key)} />
+                  <span className="text-white text-sm font-medium">{sec.label}</span>
+                </label>
+                {perm.enabled && optionKeys.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 ml-6">
+                    {optionKeys.map(optKey => (
+                      <label key={optKey} className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={!!perm.options[optKey]} onChange={() => toggleOption(key, optKey)} />
+                        <span className="text-white/50 text-xs">{sec.options[optKey]}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function ManagersPanel() {
+      const { addToast } = useContext(AppContext);
+      const [sections, setSections] = useState(null);
+      const [managers, setManagers] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [showCreate, setShowCreate] = useState(false);
+      const [newUsername, setNewUsername] = useState('');
+      const [newPassword, setNewPassword] = useState('');
+      const [newPermissions, setNewPermissions] = useState({});
+      const [saving, setSaving] = useState(false);
+      const [editingManager, setEditingManager] = useState(null); // username being edited
+      const [editPermissions, setEditPermissions] = useState({});
+      const [editPassword, setEditPassword] = useState('');
+
+      const loadAll = async () => {
+        setLoading(true);
+        try {
+          const [secs, mgrs] = await Promise.all([fetchManagerSections(), fetchManagers()]);
+          setSections(secs);
+          setManagers(mgrs);
+          setNewPermissions(emptyManagerPermissions(secs));
+        } catch (err) {
+          addToast('Failed to load managers', 'error');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => { loadAll(); }, []);
+
+      const handleCreate = async () => {
+        if (!newUsername.trim() || !newPassword) {
+          addToast('Enter a username and password', 'error');
+          return;
+        }
+        setSaving(true);
+        try {
+          await createManager(newUsername.trim(), newPassword, newPermissions);
+          addToast('Manager created', 'success');
+          setShowCreate(false);
+          setNewUsername('');
+          setNewPassword('');
+          setNewPermissions(emptyManagerPermissions(sections));
+          loadAll();
+        } catch (err) {
+          addToast(err.message || 'Failed to create manager', 'error');
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const startEdit = (mgr) => {
+        setEditingManager(mgr._id);
+        setEditPermissions(mgr.permissions || emptyManagerPermissions(sections));
+        setEditPassword('');
+      };
+
+      const handleSaveEdit = async () => {
+        setSaving(true);
+        try {
+          const updates = { permissions: editPermissions };
+          if (editPassword) updates.password = editPassword;
+          await updateManager(editingManager, updates);
+          addToast('Manager updated', 'success');
+          setEditingManager(null);
+          loadAll();
+        } catch (err) {
+          addToast(err.message || 'Failed to update manager', 'error');
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const handleToggleActive = async (mgr) => {
+        try {
+          await updateManager(mgr._id, { active: !mgr.active });
+          loadAll();
+        } catch (err) {
+          addToast(err.message || 'Failed to update manager', 'error');
+        }
+      };
+
+      const handleDelete = async (username) => {
+        if (!confirm(`Remove manager "${username}"? This cannot be undone.`)) return;
+        try {
+          await deleteManager(username);
+          addToast('Manager removed', 'success');
+          loadAll();
+        } catch (err) {
+          addToast(err.message || 'Failed to remove manager', 'error');
+        }
+      };
+
+      if (loading || !sections) {
+        return <div className="glass-panel text-center py-8 text-white/30"><span className="spinner"></span></div>;
+      }
+
+      return (
+        <div className="space-y-4">
+          <div className="glass-panel">
+            <div className="flex justify-between items-center mb-1">
+              <h3 className="text-lg font-bold text-white"><i className="fas fa-user-shield mr-2 text-red-400"></i> Manager Accounts</h3>
+              <button onClick={() => setShowCreate(s => !s)} className="btn-neon text-xs">
+                <i className="fas fa-plus mr-1"></i> New Manager
+              </button>
+            </div>
+            <p className="text-white/40 text-sm mb-2">Create limited-access accounts for people who help you manage the business. Each manager logs in at <span className="font-mono text-white/60">/manager</span> with their own username and password, and only sees the sections (and specific actions within a section) you grant here.</p>
+          </div>
+
+          {showCreate && (
+            <div className="glass-panel">
+              <h4 className="text-white font-semibold mb-3">Create Manager</h4>
+              <div className="grid sm:grid-cols-2 gap-3 mb-3">
+                <div><label className="text-white/50 text-sm">Username</label>
+                  <input type="text" autoCapitalize="none" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className="input-neon mt-1" placeholder="e.g. hamza" />
+                </div>
+                <div><label className="text-white/50 text-sm">Password</label>
+                  <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="input-neon mt-1" placeholder="Choose a password" />
+                </div>
+              </div>
+              <label className="text-white/50 text-sm block mb-2">Section Access</label>
+              <ManagerPermissionEditor sections={sections} permissions={newPermissions} onChange={setNewPermissions} />
+              <div className="flex gap-2 mt-4">
+                <button onClick={handleCreate} disabled={saving} className="btn-neon flex-1">
+                  {saving ? <span className="spinner"></span> : 'Create Manager'}
+                </button>
+                <button onClick={() => setShowCreate(false)} className="btn-neon-outline">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {managers.length === 0 ? (
+            <div className="glass-panel text-center py-8 text-white/30">
+              <i className="fas fa-user-shield text-4xl mb-3 block"></i> No managers yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {managers.map(mgr => (
+                <div key={mgr._id} className="glass-panel">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <span className="text-white font-semibold font-mono">{mgr._id}</span>
+                      {!mgr.active && <span className="badge badge-red-light ml-2 text-xs">Disabled</span>}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => startEdit(mgr)} className="btn-neon-outline text-xs"><i className="fas fa-edit mr-1"></i> Edit</button>
+                      <button onClick={() => handleToggleActive(mgr)} className="btn-neon-outline text-xs">
+                        {mgr.active ? <><i className="fas fa-ban mr-1"></i> Disable</> : <><i className="fas fa-check mr-1"></i> Enable</>}
+                      </button>
+                      <button onClick={() => handleDelete(mgr._id)} className="btn-neon-outline text-xs text-red-400"><i className="fas fa-trash mr-1"></i> Remove</button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {Object.keys(sections).filter(key => mgr.permissions && mgr.permissions[key] && mgr.permissions[key].enabled).map(key => (
+                      <span key={key} className="badge badge-green text-xs">{sections[key].label}</span>
+                    ))}
+                    {Object.keys(sections).every(key => !(mgr.permissions && mgr.permissions[key] && mgr.permissions[key].enabled)) && (
+                      <span className="text-white/30 text-xs">No sections granted yet</span>
+                    )}
+                  </div>
+
+                  {editingManager === mgr._id && (
+                    <div className="mt-4 pt-4 border-t border-white/10">
+                      <label className="text-white/50 text-sm">Reset Password (optional)</label>
+                      <input type="password" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} className="input-neon mt-1 mb-3" placeholder="Leave blank to keep current password" />
+                      <label className="text-white/50 text-sm block mb-2">Section Access</label>
+                      <ManagerPermissionEditor sections={sections} permissions={editPermissions} onChange={setEditPermissions} />
+                      <div className="flex gap-2 mt-4">
+                        <button onClick={handleSaveEdit} disabled={saving} className="btn-neon flex-1">
+                          {saving ? <span className="spinner"></span> : 'Save Changes'}
+                        </button>
+                        <button onClick={() => setEditingManager(null)} className="btn-neon-outline">Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // ─── PROMOTIONS CAROUSEL ──────────────────────────────────
     function PromotionsCarousel({ promotions }) {
       const [itemsPerView, setItemsPerView] = useState(5);
@@ -6595,8 +6955,24 @@
 
     // ─── ADMIN DASHBOARD ──────────────────────────────────────
 
-    function AdminDashboard({ subscriptions, setSubscriptions, onLogout, onBack, deals, setDeals, promotions, setPromotions, socialServices, setSocialServices }) {
-      const [activeTab, setActiveTab] = useState('overview');
+    function AdminDashboard({ subscriptions, setSubscriptions, onLogout, onBack, deals, setDeals, promotions, setPromotions, socialServices, setSocialServices, isAdmin = true, permissions = null }) {
+      // `permissions` is null for the real admin (full access to everything,
+      // including the Managers tab which no manager can ever see). For a
+      // manager it's the { section: { enabled, options } } object the admin
+      // granted them — re-fetched fresh from the server at login. `can`
+      // is the single place that decides whether a section/action shows up
+      // in this UI; the server enforces the same rule independently, so
+      // hiding something here is a convenience, not the only safeguard.
+      const can = (section, option) => {
+        if (isAdmin) return true;
+        const perm = permissions && permissions[section];
+        if (!perm || !perm.enabled) return false;
+        if (option && !(perm.options && perm.options[option])) return false;
+        return true;
+      };
+      const ALL_TABS = ['overview', 'search', 'subscriptions', 'grid', 'customers', 'waiting', 'income', 'users', 'deals', 'promotions', 'faqs', 'otp', 'broadcast', 'social', 'theme'];
+      const visibleTabs = isAdmin ? ALL_TABS : ALL_TABS.filter(t => can(t));
+      const [activeTab, setActiveTab] = useState(() => (isAdmin ? 'overview' : (visibleTabs[0] || 'overview')));
       const [showAddSub, setShowAddSub] = useState(false);
       const [showEditSub, setShowEditSub] = useState(null);
       const [showAddAccount, setShowAddAccount] = useState(null);
@@ -8799,7 +9175,7 @@
           )}
 
           <div className="flex flex-wrap gap-2 border-b border-white/5 pb-3">
-            {['overview', 'search', 'subscriptions', 'grid', 'customers', 'waiting', 'income', 'users', 'deals', 'promotions', 'faqs', 'otp', 'broadcast', 'social', 'theme'].map(tab => (
+            {visibleTabs.map(tab => (
               <button key={tab} onClick={() => {
                 setActiveTab(tab);
                 if (tab === 'users') markUsersSeen();
@@ -8822,6 +9198,11 @@
                 {tab === 'theme' && <><i className="fas fa-palette mr-2"></i> Theme</>}
               </button>
             ))}
+            {isAdmin && (
+              <button onClick={() => setActiveTab('managers')} className={`tab-btn ${activeTab === 'managers' ? 'active' : ''}`}>
+                <i className="fas fa-user-shield mr-2"></i> Managers
+              </button>
+            )}
           </div>
 
           {activeTab === 'search' && (
@@ -8983,7 +9364,7 @@
           {activeTab === 'subscriptions' && (
             <div className="space-y-6">
               <div className="flex justify-end">
-                <button onClick={() => { setShowEditSub(null); resetAddForm(); setShowAddSub(true); }} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> Add Subscription</button>
+                {can('subscriptions', 'add') && <button onClick={() => { setShowEditSub(null); resetAddForm(); setShowAddSub(true); }} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> Add Subscription</button>}
               </div>
               {subscriptions.map(sub => {
                 const totalCust = getTotalCustomers(sub);
@@ -9021,9 +9402,9 @@
                         <p className="text-white/30 text-xs">{sub.accounts.length} accounts • {totalSlots} slots • {totalCust} customers</p>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={() => openEditSub(sub)} className="btn-warning text-sm"><i className="fas fa-edit"></i> Edit</button>
-                        <button onClick={() => { setNewAccount({ ...newAccount, subscriptionId: sub.id }); setShowAddAccount(sub.id); }} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> Add Account</button>
-                        <button onClick={() => deleteSubscription(sub.id)} className="btn-danger text-sm"><i className="fas fa-trash mr-1"></i> Delete</button>
+                        {can('subscriptions', 'edit') && <button onClick={() => openEditSub(sub)} className="btn-warning text-sm"><i className="fas fa-edit"></i> Edit</button>}
+                        {can('subscriptions', 'edit') && <button onClick={() => { setNewAccount({ ...newAccount, subscriptionId: sub.id }); setShowAddAccount(sub.id); }} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> Add Account</button>}
+                        {can('subscriptions', 'delete') && <button onClick={() => deleteSubscription(sub.id)} className="btn-danger text-sm"><i className="fas fa-trash mr-1"></i> Delete</button>}
                       </div>
                     </div>
                     {sub.accounts.length > 0 && (
@@ -9336,8 +9717,8 @@
                                 <td><span className={`badge ${statusColors[status] || 'badge-red-light'}`}>{statusLabels[status] || 'N/A'}</span></td>
                                 <td>
                                   <div className="flex gap-1">
-                                    <button onClick={() => openEditModal(sub.id, r.accountId, r.screenId, r.customerIdx, r.customer)} className="btn-warning text-xs"><i className="fas fa-edit"></i></button>
-                                    <button onClick={() => deleteCustomer(sub.id, r.accountId, r.screenId, r.customerIdx)} className="btn-danger text-xs"><i className="fas fa-trash"></i></button>
+                                    {can('customers', 'edit') && <button onClick={() => openEditModal(sub.id, r.accountId, r.screenId, r.customerIdx, r.customer)} className="btn-warning text-xs"><i className="fas fa-edit"></i></button>}
+                                    {can('customers', 'delete') && <button onClick={() => deleteCustomer(sub.id, r.accountId, r.screenId, r.customerIdx)} className="btn-danger text-xs"><i className="fas fa-trash"></i></button>}
                                   </div>
                                 </td>
                               </tr>
@@ -9393,7 +9774,7 @@
                         </td>
                         <td className="text-xs text-white/40">{w.purchasedAt ? new Date(w.purchasedAt).toLocaleDateString() : 'N/A'}</td>
                         <td>
-                          <button onClick={() => handleFulfillWaiting(w.id)} className="btn-neon-outline text-xs py-1 px-2"><i className="fas fa-check mr-1"></i> Mark Fulfilled</button>
+                          {can('waiting', 'delete') && <button onClick={() => handleFulfillWaiting(w.id)} className="btn-neon-outline text-xs py-1 px-2"><i className="fas fa-check mr-1"></i> Mark Fulfilled</button>}
                         </td>
                       </tr>
                     ))}
@@ -9605,8 +9986,8 @@
                                   value={selectedUserForCredits === u.username ? creditsAmount || '' : ''}
                                   onChange={(e) => { setSelectedUserForCredits(u.username); setCreditsAmount(Number(e.target.value)); }}
                                 />
-                                <button onClick={() => handleAddCredits(u.username)} className="btn-success text-xs"><i className="fas fa-plus mr-1"></i> Add</button>
-                                <button onClick={() => handleDeductCredits(u.username)} className="btn-danger text-xs"><i className="fas fa-minus mr-1"></i> Deduct</button>
+                                {can('users', 'addCredits') && <button onClick={() => handleAddCredits(u.username)} className="btn-success text-xs"><i className="fas fa-plus mr-1"></i> Add</button>}
+                                {can('users', 'addCredits') && <button onClick={() => handleDeductCredits(u.username)} className="btn-danger text-xs"><i className="fas fa-minus mr-1"></i> Deduct</button>}
                                 <div className="action-menu-wrap">
                                   <button onClick={(e) => toggleUserActionMenu(e, u.username)} className="btn-neon-outline text-xs">
                                     <i className="fas fa-ellipsis-vertical mr-1"></i> Action
@@ -9618,7 +9999,7 @@
                                         <button className="action-menu-item" onClick={() => { setOpenUserActionMenu(null); openUserEditModal(u); }}><i className="fas fa-pen"></i> Edit</button>
                                         <button className="action-menu-item" onClick={() => { setOpenUserActionMenu(null); openGrantModal(u); }}><i className="fas fa-gift"></i> Grant Sub</button>
                                         <button className="action-menu-item" onClick={() => { setOpenUserActionMenu(null); handleViewCredentials(u.username); }} disabled={credsLoading}><i className="fas fa-eye"></i> Creds</button>
-                                        <button className="action-menu-item danger" onClick={() => { setOpenUserActionMenu(null); handleDeleteUser(u.username); }}><i className="fas fa-trash"></i> Delete</button>
+                                        {can('users', 'delete') && <button className="action-menu-item danger" onClick={() => { setOpenUserActionMenu(null); handleDeleteUser(u.username); }}><i className="fas fa-trash"></i> Delete</button>}
                                       </div>
                                     </>,
                                     document.body
@@ -9640,7 +10021,7 @@
             <div className="glass-panel">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold text-white"><i className="fas fa-fire mr-2 text-orange-400"></i> Promotional Deals</h3>
-                <button onClick={() => openDealModal()} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> New Deal</button>
+                {can('deals', 'add') && <button onClick={() => openDealModal()} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> New Deal</button>}
               </div>
               {deals.length === 0 ? (
                 <div className="text-center py-8 text-white/30"><i className="fas fa-tags text-3xl mb-3 block"></i> No deals created yet.</div>
@@ -9695,7 +10076,7 @@
             <div className="glass-panel">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold text-white"><i className="fas fa-film mr-2 text-purple-400"></i> Promotions</h3>
-                <button onClick={() => openPromoModal()} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> New Promotion</button>
+                {can('promotions', 'add') && <button onClick={() => openPromoModal()} className="btn-neon text-sm"><i className="fas fa-plus mr-2"></i> New Promotion</button>}
               </div>
               {promotions.length === 0 ? (
                 <div className="text-center py-8 text-white/30"><i className="fas fa-image text-3xl mb-3 block"></i> No promotions created yet.</div>
@@ -9745,7 +10126,7 @@
                     <label className="text-white/50 text-sm font-medium">Category (groups it with similar questions — optional)</label>
                     <input type="text" value={newFaqCategory} onChange={(e) => setNewFaqCategory(e.target.value)} className="input-neon mt-1" placeholder="e.g. Getting Started, Purchases & Payments, Support" />
                   </div>
-                  <button onClick={handleAddFaq} className="btn-neon px-6 py-2"><i className="fas fa-plus mr-2"></i> Add Question</button>
+                  {can('faqs', 'add') && <button onClick={handleAddFaq} className="btn-neon px-6 py-2"><i className="fas fa-plus mr-2"></i> Add Question</button>}
                 </div>
               </div>
 
@@ -9783,7 +10164,7 @@
                     <label className="text-white/50 text-sm font-medium">Message</label>
                     <textarea value={newNoticeMessage} onChange={(e) => setNewNoticeMessage(e.target.value)} className="input-neon mt-1" rows="3" placeholder="e.g. We'll be doing scheduled maintenance tonight from 1–3 AM. Some accounts may be briefly unavailable."></textarea>
                   </div>
-                  <button onClick={handleAddNotice} className="btn-neon px-6 py-2"><i className="fas fa-paper-plane mr-2"></i> Send to All Customers</button>
+                  {can('broadcast', 'send') && <button onClick={handleAddNotice} className="btn-neon px-6 py-2"><i className="fas fa-paper-plane mr-2"></i> Send to All Customers</button>}
                 </div>
               </div>
 
@@ -9800,7 +10181,7 @@
                             <p className="text-white/80 text-sm">{n.message}</p>
                             <p className="text-white/30 text-xs mt-1"><i className="far fa-clock mr-1"></i> {new Date(n.createdAt).toLocaleString()}</p>
                           </div>
-                          <button onClick={() => handleDeleteNotice(n.id)} className="btn-danger text-xs flex-shrink-0"><i className="fas fa-trash"></i></button>
+                          {can('broadcast', 'delete') && <button onClick={() => handleDeleteNotice(n.id)} className="btn-danger text-xs flex-shrink-0"><i className="fas fa-trash"></i></button>}
                         </div>
                       </div>
                     ))}
@@ -9853,7 +10234,7 @@
                     <h3 className="text-lg font-semibold text-white mb-1"><i className="fas fa-share-alt text-red-400 mr-2"></i> Social Media Platforms</h3>
                     <p className="text-white/30 text-xs">Step 1: add a platform (Instagram, TikTok...). Step 2: open it and add its services (Followers, Likes, Views, Comments...).</p>
                   </div>
-                  {!showAddPlatformForm && (
+                  {!showAddPlatformForm && can('social', 'manageServices') && (
                     <button onClick={() => setShowAddPlatformForm(true)} className="btn-neon whitespace-nowrap"><i className="fas fa-plus mr-2"></i> Add Platform</button>
                   )}
                 </div>
@@ -10105,6 +10486,8 @@
               <p className="text-white/20 text-xs mt-5"><i className="fas fa-info-circle mr-2"></i> Want another theme added later (holidays, a different show, anything)? Just ask — new ones slot in here the same way.</p>
             </div>
           )}
+
+          {activeTab === 'managers' && isAdmin && <ManagersPanel />}
 
           {showDealModal && (
             <div className="modal-overlay">
@@ -10508,6 +10891,8 @@
       const [socialCartRemovingId, setSocialCartRemovingId] = useState(null);
       const [customFaqs, setCustomFaqs] = useState(() => readCache('faqs'));
       const [isAdmin, setIsAdmin] = useState(false);
+      const [isManager, setIsManager] = useState(false);
+      const [managerPermissions, setManagerPermissions] = useState(null);
       const [customerData, setCustomerData] = useState(null);
       const [flowStep, setFlowStep] = useState('welcome');
       const [flowType, setFlowType] = useState(null);
@@ -10622,6 +11007,12 @@
         } else if (path === '/admin') {
           // Hidden route: only reachable by typing the URL directly, never shown in the nav.
           setActiveTab('admin');
+          setShowSubscriptions(false);
+        } else if (path === '/manager') {
+          // Hidden route for limited-access manager accounts: only reachable
+          // by typing the URL directly, never shown in the nav, and
+          // completely separate from the admin login above.
+          setActiveTab('manager');
           setShowSubscriptions(false);
         } else {
           setActiveTab('home');
@@ -11314,11 +11705,21 @@
 
           {activeTab === 'admin' && (
             <section id="admin-section" className="px-4 max-w-7xl mx-auto py-12">
-              {!isAdmin ? <AdminLogin onLogin={() => setIsAdmin(true)} /> : <AdminDashboard subscriptions={subscriptions} setSubscriptions={setSubscriptions} onLogout={() => { setIsAdmin(false); localStorage.removeItem('adminToken'); try { sessionStorage.removeItem('adminToken'); } catch (e) {} navigateTo('/'); }} onBack={() => navigateTo('/')} deals={deals} setDeals={setDeals} promotions={promotions} setPromotions={setPromotions} socialServices={socialServices} setSocialServices={setSocialServices} />}
+              {!isAdmin ? <AdminLogin onLogin={() => setIsAdmin(true)} /> : <AdminDashboard subscriptions={subscriptions} setSubscriptions={setSubscriptions} isAdmin={true} permissions={null} onLogout={() => { setIsAdmin(false); localStorage.removeItem('adminToken'); try { sessionStorage.removeItem('adminToken'); } catch (e) {} navigateTo('/'); }} onBack={() => navigateTo('/')} deals={deals} setDeals={setDeals} promotions={promotions} setPromotions={setPromotions} socialServices={socialServices} setSocialServices={setSocialServices} />}
             </section>
           )}
 
-          {activeTab !== 'home' && activeTab !== 'subscriptions' && activeTab !== 'contact' && activeTab !== 'social' && activeTab !== 'admin' && <Footer />}
+          {activeTab === 'manager' && (
+            <section id="manager-section" className="px-4 max-w-7xl mx-auto py-12">
+              {!isManager ? (
+                <ManagerLogin onLogin={(perms) => { setManagerPermissions(perms); setIsManager(true); }} />
+              ) : (
+                <AdminDashboard subscriptions={subscriptions} setSubscriptions={setSubscriptions} isAdmin={false} permissions={managerPermissions} onLogout={() => { setIsManager(false); setManagerPermissions(null); localStorage.removeItem('managerToken'); try { sessionStorage.removeItem('managerToken'); } catch (e) {} navigateTo('/'); }} onBack={() => navigateTo('/')} deals={deals} setDeals={setDeals} promotions={promotions} setPromotions={setPromotions} socialServices={socialServices} setSocialServices={setSocialServices} />
+              )}
+            </section>
+          )}
+
+          {activeTab !== 'home' && activeTab !== 'subscriptions' && activeTab !== 'contact' && activeTab !== 'social' && activeTab !== 'admin' && activeTab !== 'manager' && <Footer />}
         </div>
       );
     }
