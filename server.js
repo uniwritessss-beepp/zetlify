@@ -490,6 +490,22 @@ app.post('/api/admin/login', async (req, res) => {
 app.put('/api/admin/settings', async (req, res) => {
   try {
     const { password, recoveryNumber, theme } = req.body;
+    const auth = getAuth(req);
+    const changingSecret = (password !== undefined && password !== '') || recoveryNumber !== undefined;
+    // Password and recovery number are true admin secrets — a manager must
+    // never be able to change either, no matter what sections they were
+    // granted, since the recovery number alone can be used to reset the
+    // admin password from the login screen. Theme is purely cosmetic and
+    // site-wide, so any authenticated admin OR manager may still change it
+    // (whether a manager actually reaches this depends on whether the
+    // admin granted them the Theme section in the first place).
+    if (changingSecret) {
+      if (!auth || auth.r !== 'admin') {
+        return res.status(401).json({ error: 'Admin login required' });
+      }
+    } else if (!auth || (auth.r !== 'admin' && auth.r !== 'manager')) {
+      return res.status(401).json({ error: 'Login required' });
+    }
     const update = {};
     if (password !== undefined && password !== '') update.password = hashPassword(password);
     if (recoveryNumber !== undefined) update.recoveryNumber = recoveryNumber;
