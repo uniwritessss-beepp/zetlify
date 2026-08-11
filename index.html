@@ -959,11 +959,11 @@
       return res.json();
     };
 
-    const createManager = async (username, password, permissions) => {
+    const createManager = async (username, password, permissions, name) => {
       const res = await fetch(`${API_BASE}/api/managers`, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ username, password, permissions }),
+        body: JSON.stringify({ username, password, permissions, name }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to create manager');
@@ -5885,7 +5885,7 @@
           if (result.success) {
             setError('');
             onLogin();
-            addToast('Welcome Admin!', 'success');
+            addToast('Welcome Admin Mutahhar', 'success');
           } else {
             setError('Invalid password');
             addToast('Invalid password', 'error');
@@ -5995,8 +5995,8 @@
           if (result.success) {
             const me = await fetchMyPermissions();
             setError('');
-            onLogin(me.permissions);
-            addToast('Welcome!', 'success');
+            onLogin(me.permissions, me.name);
+            addToast(`Welcome Manager ${me.name || username.trim()}`, 'success');
           } else {
             setError(result.error || 'Invalid username or password');
             addToast(result.error || 'Invalid username or password', 'error');
@@ -6090,6 +6090,7 @@
       const [loading, setLoading] = useState(true);
       const [showCreate, setShowCreate] = useState(false);
       const [newUsername, setNewUsername] = useState('');
+      const [newName, setNewName] = useState('');
       const [newPassword, setNewPassword] = useState('');
       const [newPermissions, setNewPermissions] = useState({});
       const [saving, setSaving] = useState(false);
@@ -6120,10 +6121,11 @@
         }
         setSaving(true);
         try {
-          await createManager(newUsername.trim(), newPassword, newPermissions);
+          await createManager(newUsername.trim(), newPassword, newPermissions, newName.trim());
           addToast('Manager created', 'success');
           setShowCreate(false);
           setNewUsername('');
+          setNewName('');
           setNewPassword('');
           setNewPermissions(emptyManagerPermissions(sections));
           loadAll();
@@ -6195,7 +6197,10 @@
           {showCreate && (
             <div className="glass-panel">
               <h4 className="text-white font-semibold mb-3">Create Manager</h4>
-              <div className="grid sm:grid-cols-2 gap-3 mb-3">
+              <div className="grid sm:grid-cols-3 gap-3 mb-3">
+                <div><label className="text-white/50 text-sm">Display Name</label>
+                  <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} className="input-neon mt-1" placeholder="e.g. Hamza" />
+                </div>
                 <div><label className="text-white/50 text-sm">Username</label>
                   <input type="text" autoCapitalize="none" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className="input-neon mt-1" placeholder="e.g. hamza" />
                 </div>

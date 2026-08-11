@@ -2642,7 +2642,7 @@ app.get('/api/managers', requireAdmin, async (req, res) => {
 
 app.post('/api/managers', requireAdmin, async (req, res) => {
   try {
-    const { username, password, permissions } = req.body;
+    const { username, password, permissions, name } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
@@ -2652,6 +2652,7 @@ app.post('/api/managers', requireAdmin, async (req, res) => {
     if (existing) return res.status(409).json({ error: 'A manager with this username already exists' });
     const doc = {
       _id: clean,
+      name: (name && name.trim()) || username.trim(),
       password: hashPassword(password),
       permissions: normalizeManagerPermissions(permissions),
       active: true,
@@ -2732,12 +2733,12 @@ app.get('/api/manager/me', async (req, res) => {
         for (const optKey of Object.keys(MANAGER_SECTIONS[key].options)) options[optKey] = true;
         all[key] = { enabled: true, options };
       }
-      return res.json({ username: 'admin', role: 'admin', permissions: all });
+      return res.json({ username: 'admin', role: 'admin', name: 'Mutahhar', permissions: all });
     }
     if (auth.r === 'manager') {
       const mgr = await managersCollection.findOne({ _id: auth.u });
       if (!mgr || !mgr.active) return res.status(401).json({ error: 'Manager account no longer active' });
-      return res.json({ username: mgr._id, role: 'manager', permissions: normalizeManagerPermissions(mgr.permissions) });
+      return res.json({ username: mgr._id, role: 'manager', name: mgr.name || mgr._id, permissions: normalizeManagerPermissions(mgr.permissions) });
     }
     return res.status(401).json({ error: 'Admin or manager login required' });
   } catch (err) {
