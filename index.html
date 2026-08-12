@@ -5352,7 +5352,7 @@
           setLoading(false);
           if (result.success) {
             onLogin(result.user);
-            addToast('Account created! Welcome!', 'success');
+            addToast(`Welcome ${result.user && result.user.name ? result.user.name : username.trim()}!`, 'success');
           } else {
             addToast(result.error || 'Sign-up failed', 'error');
           }
@@ -5361,7 +5361,7 @@
           setLoading(false);
           if (result.success) {
             onLogin(result.user);
-            addToast('Welcome back!', 'success');
+            addToast(`Welcome ${result.user && result.user.name ? result.user.name : username.trim()}!`, 'success');
           } else {
             addToast(result.error || 'Login failed', 'error');
           }
