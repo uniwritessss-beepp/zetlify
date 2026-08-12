@@ -7192,12 +7192,20 @@
         if (!user && !myName.trim()) { addToast('Please enter your name', 'error'); return; }
         setSubmitting(true);
         try {
-          await submitReview(myRating, myText.trim(), user ? undefined : myName.trim());
+          // The server hands back the exact review it just saved, so we
+          // show it right away instead of firing a second full-list
+          // refetch and making the button sit there waiting on that too —
+          // that extra round trip was what made this feel slow.
+          const doc = await submitReview(myRating, myText.trim(), user ? undefined : myName.trim());
+          setReviews(prev => {
+            const next = [doc, ...prev];
+            writeCache('reviews', next);
+            return next;
+          });
           addToast('Thanks for your review!', 'success');
           setMyRating(0);
           setMyText('');
           setMyName('');
-          load();
         } catch (err) {
           addToast((err && err.error) || 'Failed to submit review', 'error');
         } finally {
