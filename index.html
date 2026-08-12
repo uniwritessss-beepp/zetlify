@@ -1334,14 +1334,14 @@
       return res.json();
     };
 
-    const submitReview = async (rating, reviewText) => {
+    const submitReview = async (rating, reviewText, name) => {
       const token = readAuthToken('authToken');
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_BASE}/api/reviews`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ rating, reviewText }),
+        body: JSON.stringify({ rating, reviewText, name }),
       });
       const result = await res.json();
       if (!res.ok) throw result;
@@ -7172,6 +7172,7 @@
       const [loading, setLoading] = useState(() => readCache('reviews').length === 0);
       const [myRating, setMyRating] = useState(0);
       const [myText, setMyText] = useState('');
+      const [myName, setMyName] = useState('');
       const [submitting, setSubmitting] = useState(false);
 
       const load = () => {
@@ -7188,12 +7189,14 @@
       const handleSubmit = async () => {
         if (!myRating) { addToast('Please select a star rating', 'error'); return; }
         if (!myText.trim()) { addToast('Please write a review along with your rating', 'error'); return; }
+        if (!user && !myName.trim()) { addToast('Please enter your name', 'error'); return; }
         setSubmitting(true);
         try {
-          await submitReview(myRating, myText.trim());
+          await submitReview(myRating, myText.trim(), user ? undefined : myName.trim());
           addToast('Thanks for your review!', 'success');
           setMyRating(0);
           setMyText('');
+          setMyName('');
           load();
         } catch (err) {
           addToast((err && err.error) || 'Failed to submit review', 'error');
@@ -7215,26 +7218,21 @@
             )}
           </div>
 
-          {user ? (
-            <div className="glass-panel max-w-xl mx-auto">
-              <h3 className="text-white font-bold mb-3">Write a Review</h3>
-              <div className={myRating ? 'mb-4' : ''}><StarRatingInput value={myRating} onChange={setMyRating} /></div>
-              {myRating > 0 && (
-                <div className="review-textarea-wrap">
-                  <textarea value={myText} onChange={(e) => setMyText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..." autoFocus></textarea>
-                  <button onClick={handleSubmit} disabled={submitting || !myRating || !myText.trim()} className="btn-neon w-full py-3 mt-3 disabled:opacity-40 disabled:cursor-not-allowed">
-                    {submitting ? <span className="spinner"></span> : 'Submit Review'}
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="glass-panel max-w-xl mx-auto text-center">
-              <i className="fas fa-lock text-white/20 text-2xl mb-2"></i>
-              <p className="text-white/50 text-sm mb-4">Log in to leave your own rating and review — everyone can read reviews, but only logged-in customers can post one.</p>
-              <button onClick={onLoginClick} className="btn-neon-outline"><i className="fas fa-sign-in-alt mr-2"></i> Log In</button>
-            </div>
-          )}
+          <div className="glass-panel max-w-xl mx-auto">
+            <h3 className="text-white font-bold mb-3">Write a Review</h3>
+            {!user && (
+              <input type="text" value={myName} onChange={(e) => setMyName(e.target.value)} className="input-neon mb-4" placeholder="Your name" />
+            )}
+            <div className={myRating ? 'mb-4' : ''}><StarRatingInput value={myRating} onChange={setMyRating} /></div>
+            {myRating > 0 && (
+              <div className="review-textarea-wrap">
+                <textarea value={myText} onChange={(e) => setMyText(e.target.value)} className="input-neon" rows="3" placeholder="Tell other customers about your experience..." autoFocus></textarea>
+                <button onClick={handleSubmit} disabled={submitting || !myRating || !myText.trim() || (!user && !myName.trim())} className="btn-neon w-full py-3 mt-3 disabled:opacity-40 disabled:cursor-not-allowed">
+                  {submitting ? <span className="spinner"></span> : 'Submit Review'}
+                </button>
+              </div>
+            )}
+          </div>
 
           <div className="max-w-2xl mx-auto space-y-4">
             {loading ? (

@@ -2221,7 +2221,7 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
-app.post('/api/reviews', requireUser, async (req, res) => {
+app.post('/api/reviews', async (req, res) => {
   try {
     const rating = parseInt(req.body.rating, 10);
     const reviewText = (req.body.reviewText || '').toString().trim();
@@ -2233,7 +2233,22 @@ app.post('/api/reviews', requireUser, async (req, res) => {
     if (!reviewText) {
       return res.status(400).json({ error: 'Please write a review along with your rating' });
     }
-    const username = req.authUsername;
+
+    // Logged in: use the real account username, same as always. Not
+    // logged in: no login required anymore — just take whatever name they
+    // typed, the same way an admin-authored review already accepts a
+    // freeform name.
+    const auth = getAuth(req);
+    let username;
+    if (auth && auth.r === 'user') {
+      username = auth.u;
+    } else {
+      username = (req.body.name || '').toString().trim();
+      if (!username) {
+        return res.status(400).json({ error: 'Please enter your name' });
+      }
+    }
+
     const now = new Date().toISOString();
     const doc = {
       id: Date.now().toString(),
