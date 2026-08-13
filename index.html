@@ -11432,6 +11432,15 @@
       const userRef = useRef(user);
       useEffect(() => { userRef.current = user; }, [user]);
 
+      // Same idea for flowStep — lets the poll below know, on every tick,
+      // whether the customer is *currently looking at* their dashboard, so
+      // it can keep that screen's account details (email/password/PIN/
+      // expiry etc.) in sync with whatever the admin panel last saved —
+      // instead of only recomputing them once, at the moment the
+      // dashboard was first opened.
+      const flowStepRef = useRef(flowStep);
+      useEffect(() => { flowStepRef.current = flowStep; }, [flowStep]);
+
       useEffect(() => {
         const fadeTimer = setTimeout(() => setIntroFading(true), 2600);
         const hideTimer = setTimeout(() => setShowIntro(false), 3000);
@@ -11474,6 +11483,24 @@
           // needing to reopen their portal or refresh the page.
           if (userRef.current) {
             refreshUser().catch(err => console.error('Background user refresh failed:', err));
+          }
+
+          // Same idea for whatever's actually showing on the customer's
+          // own dashboard right now (email, password, screen PIN, expiry
+          // date, custom-grant details, etc.) — recompute it from the
+          // fresh `subs` this same tick just fetched, so an edit made in
+          // the admin panel appears here within one poll, automatically,
+          // with no refresh needed at all.
+          if (userRef.current && flowStepRef.current === 'customer-dash') {
+            const freshSubEntries = findCustomers(userRef.current.username, subs);
+            fetchCustomGrants(userRef.current.username)
+              .then(grants => setCustomerData([...freshSubEntries, ...mapCustomGrantsToEntries(grants)]))
+              .catch(() => {
+                // Custom grants fetch failed — still update the
+                // subscription-based part, keeping whatever custom-grant
+                // entries were already on screen rather than dropping them.
+                setCustomerData(prev => [...freshSubEntries, ...(prev || []).filter(e => e.isCustom)]);
+              });
           }
 
           // Same idea for the admin password/recovery number — if it was
