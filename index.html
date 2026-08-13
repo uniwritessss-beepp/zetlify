@@ -388,26 +388,13 @@
     .cart-float-badge { position:absolute; top:-4px; right:-4px; background:var(--t-primary-hex); color:#fff; font-size:.65rem; font-weight:700; min-width:18px; height:18px; border-radius:9px; display:flex; align-items:center; justify-content:center; padding:0 4px; }
 
     /* ─── HERO ───────────────────────────────────────────────── */
-    /* Sticky parallax: the hero stays pinned to the top of the viewport
-       while the page scrolls past it, and the section right after it
-       (`.trending-wrapper`, pulled up with a negative margin below) slides
-       up from the bottom and passes over it — a layered/parallax look
-       without `background-attachment:fixed`, which is unreliable on
-       mobile Safari/Chrome (jank, repaint bugs, and sometimes ignored
-       entirely). `position:sticky` is native scroll-driven compositing,
-       so it stays smooth on phones and needs no extra mobile fallback. */
-    .hero-bg { position:sticky; top:0; z-index:1; min-height:100vh; display:flex; align-items:center; overflow:hidden; background:radial-gradient(ellipse at 30% 20%, rgba(var(--t-primary),0.06) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(var(--t-primary),0.04) 0%, transparent 50%); }
+    .hero-bg { position:relative; overflow:hidden; background:radial-gradient(ellipse at 30% 20%, rgba(var(--t-primary),0.06) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(var(--t-primary),0.04) 0%, transparent 50%); }
     .glow-orb { position:absolute; border-radius:50%; filter:blur(80px); opacity:0.3; pointer-events:none; }
     .glow-orb.orb1 { width:400px; height:400px; background:rgba(var(--t-primary),0.15); top:-100px; left:-100px; }
     .glow-orb.orb2 { width:300px; height:300px; background:rgba(var(--t-primary),0.10); bottom:-50px; right:-50px; }
 
     /* ─── TRENDING SECTION ───────────────────────────────────── */
-    /* Pulled up over the sticky hero's bottom edge with a negative
-       margin, given a higher stacking order, and painted with the
-       site's real page background (not just its own gradient) so it
-       fully — and seamlessly — covers the hero as it slides over it;
-       no gap, seam or flash of the wrong color at the overlap line. */
-    .trending-wrapper { position:relative; z-index:10; overflow:hidden; padding:56px 0 40px; margin-top:-40px; border-radius:32px 32px 0 0; box-shadow:0 -24px 48px -24px rgba(0,0,0,0.45); background:var(--t-bg) radial-gradient(ellipse at 50% 50%, rgba(var(--t-primary),0.03) 0%, transparent 60%); }
+    .trending-wrapper { position:relative; overflow:hidden; padding:20px 0 40px; background:radial-gradient(ellipse at 50% 50%, rgba(var(--t-primary),0.03) 0%, transparent 60%); }
     .trending-section { position:relative; }
     .trending-bg-text { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; overflow:hidden; opacity:0.03; }
     .trending-bg-text h2 { font-size:6rem; font-weight:900; white-space:nowrap; color:#fff; letter-spacing:8px; }
@@ -567,7 +554,7 @@
     @media (max-width:1200px) { .carousel-slide { flex:0 0 25%; } }
     @media (max-width:992px) { .carousel-slide { flex:0 0 33.333%; } }
     @media (max-width:768px) { .carousel-slide { flex:0 0 50%; } .brand-z { width:1.8rem; height:1.8rem; font-size:1rem; } .logo-primary { font-size:1.2rem; } }
-    @media (max-width:640px) { .carousel-slide { flex:0 0 100%; } .sub-icon { font-size:2.2rem; } .otp-input { width:44px; height:52px; font-size:1.3rem; } .toast-container { left:16px; right:16px; max-width:100%; bottom:16px; } .admin-table th,.admin-table td { padding:8px 10px; font-size:.75rem; } .carousel-btn { width:30px; height:30px; font-size:.8rem; } .carousel-btn.prev { left:-2px; } .carousel-btn.next { right:-2px; } .whatsapp-float { width:50px; height:50px; font-size:1.6rem; bottom:16px; right:16px; } .chatbot-float { width:48px; height:48px; font-size:1.35rem; bottom:74px; right:16px; } .chatbot-window { bottom:130px; right:12px; width:calc(100vw - 24px); height:60vh; } .complaint-float { width:44px; height:44px; font-size:1.25rem; bottom:132px; right:16px; } .cart-float { width:44px; height:44px; font-size:1.15rem; bottom:184px; right:16px; } .glass-panel { padding:16px 14px; } .deal-card { min-height:140px; padding:10px 10px; } .deal-price-discount { font-size:1.2rem; } .hero-bg { padding-top:0; } .trending-wrapper { margin-top:-24px; border-radius:20px 20px 0 0; } }
+    @media (max-width:640px) { .carousel-slide { flex:0 0 100%; } .sub-icon { font-size:2.2rem; } .otp-input { width:44px; height:52px; font-size:1.3rem; } .toast-container { left:16px; right:16px; max-width:100%; bottom:16px; } .admin-table th,.admin-table td { padding:8px 10px; font-size:.75rem; } .carousel-btn { width:30px; height:30px; font-size:.8rem; } .carousel-btn.prev { left:-2px; } .carousel-btn.next { right:-2px; } .whatsapp-float { width:50px; height:50px; font-size:1.6rem; bottom:16px; right:16px; } .chatbot-float { width:48px; height:48px; font-size:1.35rem; bottom:74px; right:16px; } .chatbot-window { bottom:130px; right:12px; width:calc(100vw - 24px); height:60vh; } .complaint-float { width:44px; height:44px; font-size:1.25rem; bottom:132px; right:16px; } .cart-float { width:44px; height:44px; font-size:1.15rem; bottom:184px; right:16px; } .glass-panel { padding:16px 14px; } .deal-card { min-height:140px; padding:10px 10px; } .deal-price-discount { font-size:1.2rem; } .hero-bg { padding-top:0; } }
     @media (max-width:480px) { .card-modal-content { padding:24px 16px; } .card-modal-content .modal-icon { font-size:3rem; } .card-modal-content .modal-name { font-size:1.4rem; } }
 
     /* ─── THEME OVERRIDES FOR TAILWIND UTILITY CLASSES ───────
