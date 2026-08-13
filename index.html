@@ -622,8 +622,26 @@
 
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <!-- jsPDF (only used by the admin's "Generate Invoice" button) and Babel
+       (only needed to compile the app the very first time a browser sees
+       this exact build — see the caching logic near the bottom of this
+       file) are both loaded on demand now instead of on every page load.
+       That's a couple of megabytes nobody has to download or parse unless
+       that specific feature or situation is actually hit. -->
+  <script>
+    window.__loadScriptOnce = function (src) {
+      window.__loadedScripts = window.__loadedScripts || {};
+      if (window.__loadedScripts[src]) return window.__loadedScripts[src];
+      window.__loadedScripts[src] = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('Failed to load ' + src));
+        document.head.appendChild(s);
+      });
+      return window.__loadedScripts[src];
+    };
+  </script>
 
   <script type="text/plain" id="app-source">
     const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
@@ -8993,8 +9011,9 @@
       // about to expire — shown as a "Generate Invoice" action on the
       // Overview > Expiring Soon list. Builds a branded PDF with jsPDF
       // and triggers a download; nothing is sent anywhere automatically.
-      const generateExpiryInvoice = (item) => {
+      const generateExpiryInvoice = async (item) => {
         try {
+          if (!window.jspdf) await window.__loadScriptOnce('https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js');
           const { jsPDF } = window.jspdf;
           const doc = new jsPDF({ unit: 'pt', format: 'a4' });
           const pageW = doc.internal.pageSize.getWidth();
@@ -12250,6 +12269,8 @@
       const source = sourceEl.textContent;
       const CACHE_PREFIX = 'compiledApp_v2_';
       let code = null;
+      const BABEL_SRC = 'https://unpkg.com/@babel/standalone/babel.min.js';
+      const compile = () => Babel.transform(source, { presets: [['react', { runtime: 'classic' }]] }).code;
 
       try {
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
@@ -12258,13 +12279,18 @@
         code = localStorage.getItem(cacheKey);
 
         if (!code) {
+          // Only reached on the very first visit to this exact build (or
+          // right after a fresh deploy). Babel — a couple of MB — is
+          // fetched here, on demand. Every later visit finds `code`
+          // already cached above and never downloads or runs Babel at all.
+          await window.__loadScriptOnce(BABEL_SRC);
           // IMPORTANT: runtime must be 'classic'. Babel's default/"automatic"
           // JSX runtime injects `import { jsx as _jsx } from "react/jsx-runtime"`
           // at the top of the compiled output, which breaks immediately when
           // run as a plain (non-module) <script> — "classic" instead compiles
           // JSX to plain React.createElement(...) calls using the global
           // `React` this app already relies on, with no import statements.
-          code = Babel.transform(source, { presets: [['react', { runtime: 'classic' }]] }).code;
+          code = compile();
           try {
             // Drop any older cached build first so we don't accumulate
             // stale compiled bundles (and their storage space) forever.
@@ -12281,7 +12307,8 @@
         // SubtleCrypto unavailable (e.g. very old browser) - fall back to
         // compiling without caching. The app still works, just without
         // the repeat-visit speed-up.
-        code = Babel.transform(source, { presets: [['react', { runtime: 'classic' }]] }).code;
+        await window.__loadScriptOnce(BABEL_SRC);
+        code = compile();
       }
 
       const runScript = document.createElement('script');

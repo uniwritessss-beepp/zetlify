@@ -98,6 +98,16 @@ async function connectDB() {
   // Reviews are always fetched sorted newest-first — index it so that
   // sort doesn't have to be done in memory as the list grows.
   try { await reviewsCollection.createIndex({ createdAt: -1 }); } catch (e) { console.error('⚠️ reviews createdAt index failed:', e.message); }
+  // Login/signup were checking username and WhatsApp number with a full
+  // collection scan (Mongo reading every single user document one by one)
+  // since neither field had an index — fine with a few users, but it gets
+  // slower with every signup. These make those lookups near-instant no
+  // matter how large the user list grows. Same idea for subscriptions,
+  // which are looked up by `id` on almost every admin action.
+  try { await usersCollection.createIndex({ username: 1 }, { unique: true }); } catch (e) { console.error('⚠️ users username index failed:', e.message); }
+  try { await usersCollection.createIndex({ whatsapp: 1 }); } catch (e) { console.error('⚠️ users whatsapp index failed:', e.message); }
+  try { await subscriptionsCollection.createIndex({ id: 1 }, { unique: true }); } catch (e) { console.error('⚠️ subscriptions id index failed:', e.message); }
+  try { await managersCollection.createIndex({ username: 1 }); } catch (e) { console.error('⚠️ managers username index failed:', e.message); }
   console.log('✅ Connected to MongoDB');
 }
 
