@@ -729,11 +729,23 @@
       return res.json();
     };
 
+    // Remembers the last ETag the server sent for /api/subscriptions, plus
+    // the last body that came with it, so repeat polls can ask "has this
+    // changed?" instead of re-downloading the whole subscriptions
+    // collection every single time.
+    let _subsETag = null;
+    let _subsCache = null;
+
     const fetchSubscriptions = async () => {
-      const res = await fetch(`${API_BASE}/api/subscriptions?t=${Date.now()}`, {
-        headers: authHeaders({ 'Cache-Control': 'no-cache' })
-      });
-      return res.json();
+      const headers = authHeaders({ 'Cache-Control': 'no-cache' });
+      if (_subsETag) headers['If-None-Match'] = _subsETag;
+      const res = await fetch(`${API_BASE}/api/subscriptions`, { headers });
+      if (res.status === 304 && _subsCache) return _subsCache;
+      const etag = res.headers.get('ETag');
+      if (etag) _subsETag = etag;
+      const data = await res.json();
+      _subsCache = data;
+      return data;
     };
 
     const updateSubscription = async (subId, data) => {
@@ -11585,7 +11597,10 @@
         // Poll quietly in the background so changes made in the admin
         // portal (even from a different browser/device) appear here
         // automatically, without the customer needing to refresh the page.
-        const pollInterval = setInterval(() => loadData(true), 8000);
+        // 45s instead of 8s — still feels live, but ~5.6x fewer requests
+        // per open tab. Combined with the server's ETag/304 support below,
+        // ticks where nothing changed cost almost no bandwidth at all.
+        const pollInterval = setInterval(() => loadData(true), 45000);
 
         // Also refresh immediately whenever the tab regains focus, so
         // switching back to it feels instant rather than waiting for the

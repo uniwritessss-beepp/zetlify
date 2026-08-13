@@ -884,7 +884,23 @@ app.get('/api/subscriptions', async (req, res) => {
     const subs = await subscriptionsCollection.find({}).toArray();
     // Account passwords / PINs are blanked for anyone who isn't the admin or
     // the customer that owns the slot — see maskSubscriptionForViewer.
-    res.json(subs.map(s => maskSubscriptionForViewer(s, auth)));
+    const payload = subs.map(s => maskSubscriptionForViewer(s, auth));
+    const body = JSON.stringify(payload);
+
+    // ETag = a fingerprint of this exact response body. Every client that
+    // polls this endpoint (every visitor, every 45s) sends back the ETag it
+    // last received via If-None-Match. If nothing has changed since then,
+    // we skip re-sending the whole subscriptions collection and answer with
+    // a bare 304 instead — this is where most of the bandwidth savings
+    // come from, since most polls land on "nothing changed".
+    const etag = 'W/"' + crypto.createHash('sha1').update(body).digest('hex') + '"';
+    res.set('ETag', etag);
+    res.set('Cache-Control', 'no-cache'); // always revalidate, never serve stale silently
+    if (req.headers['if-none-match'] === etag) {
+      return res.status(304).end();
+    }
+    res.set('Content-Type', 'application/json');
+    res.send(body);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
