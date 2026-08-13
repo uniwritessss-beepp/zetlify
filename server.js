@@ -1119,6 +1119,99 @@ app.put('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/
   }
 });
 
+// Customer self-service renewal: extends one specific customer's expiry by
+// the same duration they originally purchased (months or days), charging
+// their credits wallet at the subscription's current per-month price —
+// same "server decides the price, never trust the client" rule as regular
+// purchases. Deduct-then-extend, with a refund if the extend step fails
+// for any reason, so a renewal can never charge without actually renewing.
+app.post('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username/renew', async (req, res) => {
+  try {
+    const { purchaseId } = req.body || {};
+
+    const sub = await subscriptionsCollection.findOne({ id: req.params.id });
+    if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+    const acc = (sub.accounts || []).find(a => a.id === req.params.accountId);
+    const screen = acc && (acc.screens || []).find(s => s.id === req.params.screenId);
+    const customer = screen && (screen.customers || []).find(c => c.username === req.params.username);
+    if (!customer) return res.status(404).json({ error: 'Customer not found on that screen' });
+
+    const renewMonths = Number(customer.months) || 0;
+    const renewDays = renewMonths > 0 ? 0 : (Number(customer.days) || 30);
+    const perMonth = Number(sub.sellingPrice) || 0;
+    const amount = renewMonths > 0
+      ? Math.round(perMonth * renewMonths)
+      : Math.round(perMonth * (renewDays / 30));
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "This subscription doesn't have a valid renewal price set — contact support." });
+    }
+
+    // Idempotency: a duplicate/retried renewal request with the same
+    // purchaseId just returns the already-renewed state instead of
+    // charging or extending a second time.
+    const key = purchaseId ? `renew:${purchaseId}` : null;
+    const claimed = await claimIdempotencyKey(key);
+    if (!claimed) {
+      const current = await usersCollection.findOne({ username: req.params.username });
+      const freshSub = await subscriptionsCollection.findOne({ id: req.params.id });
+      const freshCust = freshSub && freshSub.accounts.find(a => a.id === req.params.accountId)?.screens.find(s => s.id === req.params.screenId)?.customers.find(c => c.username === req.params.username);
+      return res.json({ success: true, newExpiryDate: freshCust?.expiryDate, newBalance: current?.credits });
+    }
+
+    const chargeResult = await usersCollection.findOneAndUpdate(
+      { username: req.params.username, credits: { $gte: amount } },
+      { $inc: { credits: -amount } },
+      { returnDocument: 'after' }
+    );
+    const chargedUser = chargeResult && chargeResult.value !== undefined ? chargeResult.value : chargeResult;
+    if (!chargedUser) {
+      const user = await usersCollection.findOne({ username: req.params.username });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      return res.status(400).json({ error: `Not enough credits — renewing costs RS ${amount}, you have RS ${user.credits}.` });
+    }
+
+    // Extend from whichever is later: the current expiry (so renewing
+    // early doesn't waste remaining days) or today (if it already lapsed).
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const currentExpiry = customer.expiryDate ? new Date(customer.expiryDate) : now;
+    const base = currentExpiry > now ? currentExpiry : now;
+    const newExpiry = new Date(base);
+    if (renewMonths > 0) newExpiry.setMonth(newExpiry.getMonth() + renewMonths);
+    else newExpiry.setDate(newExpiry.getDate() + renewDays);
+    const newExpiryDate = newExpiry.toISOString().split('T')[0];
+
+    const extendResult = await subscriptionsCollection.updateOne(
+      { id: req.params.id },
+      { $set: { 'accounts.$[acc].screens.$[scr].customers.$[cust].expiryDate': newExpiryDate } },
+      { arrayFilters: [{ 'acc.id': req.params.accountId }, { 'scr.id': req.params.screenId }, { 'cust.username': req.params.username }] }
+    );
+
+    if (extendResult.matchedCount === 0 || extendResult.modifiedCount === 0) {
+      // Extension didn't land (e.g. the customer/screen vanished between
+      // our read and write) — refund the charge so nothing was paid for
+      // nothing, then report the failure.
+      await usersCollection.updateOne({ username: req.params.username }, { $inc: { credits: amount } });
+      return res.status(404).json({ error: 'Could not renew — that screen or customer no longer exists. You have not been charged.' });
+    }
+
+    await creditHistoryCollection.insertOne({
+      id: crypto.randomUUID(),
+      username: req.params.username,
+      type: 'debit',
+      amount,
+      reason: `Renewed ${sub.name}`,
+      purchaseId: purchaseId || null,
+      balanceAfter: chargedUser.credits,
+      createdAt: new Date()
+    });
+
+    res.json({ success: true, newExpiryDate, newBalance: chargedUser.credits, amountCharged: amount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username', requireAccess('customers', 'delete'), async (req, res) => {
   try {
     const result = await subscriptionsCollection.updateOne(

@@ -1075,6 +1075,21 @@
       return data;
     };
 
+    // Self-service renewal: extends one specific active subscription entry
+    // by its original duration, charging credits at the subscription's
+    // current price. The server recomputes the price and does the credit
+    // deduction + expiry extension together — this just calls it.
+    const renewSubscription = async (subId, accountId, screenId, username, purchaseId) => {
+      const res = await fetch(`${API_BASE}/api/subscriptions/${subId}/accounts/${accountId}/screens/${screenId}/customers/${username}/renew`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchaseId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw data; // e.g. { error: 'Not enough credits — renewing costs RS 500, you have RS 100.' }
+      return data;
+    };
+
     // Every add / spend of a customer's credits, newest first — used by the
     // "Credits" button on the customer portal and by the admin panel.
     const fetchCreditHistory = async (username) => {
@@ -5687,6 +5702,13 @@
       const [showCreditHistory, setShowCreditHistory] = useState(false);
       const [socialOrders, setSocialOrders] = useState([]);
       const [socialOrdersLoading, setSocialOrdersLoading] = useState(true);
+      // A local, patchable copy of customerData — seeded from the prop and
+      // kept in sync with it, but also directly updated the moment a
+      // renewal succeeds so the new expiry/credits show immediately
+      // instead of waiting on the parent to refetch everything.
+      const [localCustomerData, setLocalCustomerData] = useState(customerData || []);
+      const [renewingKey, setRenewingKey] = useState(null);
+      useEffect(() => { setLocalCustomerData(customerData || []); }, [customerData]);
       // Which subscription "folder" (e.g. Netflix, Amazon Prime) is
       // currently expanded on the portal — null means the folder grid is
       // showing and nothing is opened yet. Grouping by subscription name
@@ -5773,9 +5795,48 @@
         return { label: 'Active', color: 'badge-green' };
       };
 
+      const renewalPriceFor = (entry) => {
+        const sub = (subscriptions || []).find(s => s.id === entry.subscriptionId);
+        const perMonth = Number(sub?.sellingPrice) || 0;
+        return entry.months
+          ? Math.round(perMonth * entry.months)
+          : Math.round(perMonth * ((entry.days || 30) / 30));
+      };
+
+      const handleRenew = async (entry) => {
+        const price = renewalPriceFor(entry);
+        if (price <= 0) {
+          addToast("This subscription doesn't have a renewal price set — contact support.", 'error');
+          return;
+        }
+        if (userCredits < price) {
+          addToast(`You need RS ${price} in credits to renew — you have RS ${userCredits}. Top up your credits first.`, 'error');
+          return;
+        }
+        if (!window.confirm(`Renew ${entry.subscriptionName} for another ${entry.months ? entry.months + ' month(s)' : (entry.days || 30) + ' day(s)'}? RS ${price} will be deducted from your credits.`)) {
+          return;
+        }
+        const renewKey = `${entry.subscriptionId}:${entry.accountId}:${entry.screenId}`;
+        setRenewingKey(renewKey);
+        try {
+          const result = await renewSubscription(entry.subscriptionId, entry.accountId, entry.screenId, entry.username, genPurchaseId());
+          setLocalCustomerData(prev => prev.map(e =>
+            (e.subscriptionId === entry.subscriptionId && e.accountId === entry.accountId && e.screenId === entry.screenId)
+              ? { ...e, expiryDate: result.newExpiryDate }
+              : e
+          ));
+          setUserCredits(result.newBalance);
+          addToast(`Renewed! New expiry: ${result.newExpiryDate}`, 'success');
+        } catch (err) {
+          addToast(err?.error || 'Renewal failed — please try again.', 'error');
+        } finally {
+          setRenewingKey(null);
+        }
+      };
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const activeEntries = (customerData || []).filter(entry => {
+      const activeEntries = (localCustomerData || []).filter(entry => {
         if (!entry.expiryDate) return true;
         const exp = new Date(entry.expiryDate);
         exp.setHours(0, 0, 0, 0);
@@ -5818,8 +5879,8 @@
         return worst;
       };
 
-      const displayName = customerData && customerData.length > 0 ? customerData[0].name : user?.username || 'User';
-      const displayWhatsapp = customerData && customerData.length > 0 ? customerData[0].whatsapp : user?.whatsapp || 'N/A';
+      const displayName = localCustomerData && localCustomerData.length > 0 ? localCustomerData[0].name : user?.username || 'User';
+      const displayWhatsapp = localCustomerData && localCustomerData.length > 0 ? localCustomerData[0].whatsapp : user?.whatsapp || 'N/A';
 
       const activeDeals = (deals || []).filter(d => d.active);
 
@@ -5832,7 +5893,7 @@
         );
       };
 
-      if (!customerData || customerData.length === 0) {
+      if (!localCustomerData || localCustomerData.length === 0) {
         return (
           <div className="space-y-6">
             {renderDealsSection()}
@@ -5989,8 +6050,23 @@
                                   )}
                                 </div>
                                 {entryExpiring && (
-                                  <div className="mt-2 text-xs text-yellow-400">
-                                    <i className="fas fa-clock mr-1"></i> This subscription expires {status.label === 'Expires Today' ? 'today' : 'tomorrow'}!
+                                  <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+                                    <p className="text-xs text-yellow-400">
+                                      <i className="fas fa-clock mr-1"></i> This subscription expires {status.label === 'Expires Today' ? 'today' : 'tomorrow'}!
+                                    </p>
+                                    {!entry.isCustom && entry.subscriptionId && (
+                                      <button
+                                        onClick={() => handleRenew(entry)}
+                                        disabled={renewingKey === `${entry.subscriptionId}:${entry.accountId}:${entry.screenId}`}
+                                        className="btn-neon text-xs py-1.5 px-3"
+                                      >
+                                        {renewingKey === `${entry.subscriptionId}:${entry.accountId}:${entry.screenId}` ? (
+                                          <span className="spinner"></span>
+                                        ) : (
+                                          <><i className="fas fa-rotate mr-1"></i> Renew Now — RS {renewalPriceFor(entry)}</>
+                                        )}
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                               </div>
