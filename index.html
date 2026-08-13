@@ -370,20 +370,10 @@
     /* ─── WHATSAPP FLOATING BUTTON (right-aligned) ──────────── */
     .whatsapp-float { position:fixed; bottom:24px; right:24px; z-index:100; background:#25D366; color:#fff; width:60px; height:60px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:2rem; box-shadow:0 4px 30px rgba(37,211,102,0.4); transition:all .3s ease; text-decoration:none; }
     .whatsapp-float:hover { transform:scale(1.08); box-shadow:0 6px 40px rgba(37,211,102,0.5); }
-    /* Chatbot sits directly above the WhatsApp button, as its own step in
-       the floating-button stack. Everything below it (Complaint, Cart)
-       shifts up by one slot to make room. */
-    .chatbot-float { position:fixed; bottom:96px; right:24px; z-index:100; background:var(--t-primary-hex); color:#fff; width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.6rem; box-shadow:0 4px 30px rgba(var(--t-primary),0.45); transition:all .3s ease; border:none; cursor:pointer; }
-    .chatbot-float:hover { transform:scale(1.08); box-shadow:0 6px 40px rgba(var(--t-primary),0.55); }
-    .chatbot-window { position:fixed; bottom:160px; right:24px; z-index:150; width:360px; max-width:calc(100vw - 32px); height:480px; max-height:70vh; background:rgba(var(--t-panel),0.98); border:1px solid rgba(var(--t-primary),0.25); border-radius:20px; box-shadow:0 20px 60px rgba(0,0,0,0.5); display:flex; flex-direction:column; overflow:hidden; animation:chatSlideUp .25s ease; }
-    @keyframes chatSlideUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-    .chatbot-window .chatbot-header { padding:14px 16px; border-bottom:1px solid rgba(var(--t-primary),0.15); display:flex; align-items:center; gap:10px; flex-shrink:0; }
-    .chatbot-window .chatbot-messages { flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
-    .chatbot-window .chatbot-input-row { padding:10px 12px; border-top:1px solid rgba(var(--t-primary),0.15); display:flex; gap:8px; flex-shrink:0; }
-    .complaint-float { position:fixed; bottom:168px; right:24px; z-index:100; background:var(--t-primary-hex); color:#fff; width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.5rem; box-shadow:0 4px 30px rgba(var(--t-primary),0.4); transition:all .3s ease; text-decoration:none; border:none; cursor:pointer; }
+    .complaint-float { position:fixed; bottom:96px; right:24px; z-index:100; background:var(--t-primary-hex); color:#fff; width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.5rem; box-shadow:0 4px 30px rgba(var(--t-primary),0.4); transition:all .3s ease; text-decoration:none; border:none; cursor:pointer; }
     .complaint-float:hover { transform:scale(1.08); box-shadow:0 6px 40px rgba(var(--t-primary),0.5); }
 
-    .cart-float { position:fixed; bottom:232px; right:24px; z-index:100; background:#18181b; color:#fff; width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.35rem; box-shadow:0 4px 30px rgba(0,0,0,0.4); transition:all .3s ease; text-decoration:none; border:1px solid rgba(var(--t-primary),0.3); cursor:pointer; }
+    .cart-float { position:fixed; bottom:160px; right:24px; z-index:100; background:#18181b; color:#fff; width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.35rem; box-shadow:0 4px 30px rgba(0,0,0,0.4); transition:all .3s ease; text-decoration:none; border:1px solid rgba(var(--t-primary),0.3); cursor:pointer; }
     .cart-float:hover { transform:scale(1.08); }
     .cart-float-badge { position:absolute; top:-4px; right:-4px; background:var(--t-primary-hex); color:#fff; font-size:.65rem; font-weight:700; min-width:18px; height:18px; border-radius:9px; display:flex; align-items:center; justify-content:center; padding:0 4px; }
 
@@ -554,7 +544,7 @@
     @media (max-width:1200px) { .carousel-slide { flex:0 0 25%; } }
     @media (max-width:992px) { .carousel-slide { flex:0 0 33.333%; } }
     @media (max-width:768px) { .carousel-slide { flex:0 0 50%; } .brand-z { width:1.8rem; height:1.8rem; font-size:1rem; } .logo-primary { font-size:1.2rem; } }
-    @media (max-width:640px) { .carousel-slide { flex:0 0 100%; } .sub-icon { font-size:2.2rem; } .otp-input { width:44px; height:52px; font-size:1.3rem; } .toast-container { left:16px; right:16px; max-width:100%; bottom:16px; } .admin-table th,.admin-table td { padding:8px 10px; font-size:.75rem; } .carousel-btn { width:30px; height:30px; font-size:.8rem; } .carousel-btn.prev { left:-2px; } .carousel-btn.next { right:-2px; } .whatsapp-float { width:50px; height:50px; font-size:1.6rem; bottom:16px; right:16px; } .chatbot-float { width:48px; height:48px; font-size:1.35rem; bottom:74px; right:16px; } .chatbot-window { bottom:130px; right:12px; width:calc(100vw - 24px); height:60vh; } .complaint-float { width:44px; height:44px; font-size:1.25rem; bottom:132px; right:16px; } .cart-float { width:44px; height:44px; font-size:1.15rem; bottom:184px; right:16px; } .glass-panel { padding:16px 14px; } .deal-card { min-height:140px; padding:10px 10px; } .deal-price-discount { font-size:1.2rem; } .hero-bg { padding-top:0; } }
+    @media (max-width:640px) { .carousel-slide { flex:0 0 100%; } .sub-icon { font-size:2.2rem; } .otp-input { width:44px; height:52px; font-size:1.3rem; } .toast-container { left:16px; right:16px; max-width:100%; bottom:16px; } .admin-table th,.admin-table td { padding:8px 10px; font-size:.75rem; } .carousel-btn { width:30px; height:30px; font-size:.8rem; } .carousel-btn.prev { left:-2px; } .carousel-btn.next { right:-2px; } .whatsapp-float { width:50px; height:50px; font-size:1.6rem; bottom:16px; right:16px; } .complaint-float { width:44px; height:44px; font-size:1.25rem; bottom:74px; right:16px; } .cart-float { width:44px; height:44px; font-size:1.15rem; bottom:126px; right:16px; } .glass-panel { padding:16px 14px; } .deal-card { min-height:140px; padding:10px 10px; } .deal-price-discount { font-size:1.2rem; } .hero-bg { padding-top:0; } }
     @media (max-width:480px) { .card-modal-content { padding:24px 16px; } .card-modal-content .modal-icon { font-size:3rem; } .card-modal-content .modal-name { font-size:1.4rem; } }
 
     /* ─── THEME OVERRIDES FOR TAILWIND UTILITY CLASSES ───────
@@ -3114,144 +3104,6 @@
               )}
             </div>
           </div>
-        </>
-      );
-    }
-
-    // ─── SITE CHATBOT (floating button + window, sits just above the
-    // WhatsApp button) ──────────────────────────────────────────────
-    // Same rule-based matching engine as the Help page's assistant
-    // (DEFAULT_FAQS / FAQ_KEYWORDS / matchHelpQuestion, defined further
-    // down this file), just wrapped in its own floating popup so it's
-    // reachable from anywhere on the site, not only the Help tab.
-    function SiteChatbot({ onAction, customFaqs }) {
-      const [open, setOpen] = useState(false);
-      const allFaqs = useMemo(() => [...DEFAULT_FAQS, ...(customFaqs || [])], [customFaqs]);
-      const [messages, setMessages] = useState(() => [{
-        id: 'greet', role: 'bot',
-        text: "Assalam-o-Alaikum! 👋 Kuch bhi puchein — subscription, login, credits, ya social media services ke baare mein — English ya Roman Urdu mein, jo bhi easy ho.\n\nHi! Ask me anything — subscriptions, logins, credits, or social media services — in English or Roman Urdu, whichever's easier.",
-      }]);
-      const [input, setInput] = useState('');
-      const scrollRef = useRef(null);
-
-      useEffect(() => {
-        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }, [messages, open]);
-
-      const pushBot = (msg) => setMessages(prev => [...prev, { id: 'm' + Date.now() + Math.random(), role: 'bot', ...msg }]);
-      const pushUser = (text) => setMessages(prev => [...prev, { id: 'm' + Date.now() + Math.random(), role: 'user', text }]);
-
-      const answerWithFaq = (faq, isRoman) => {
-        pushBot({ text: (isRoman && faq.answerRoman) ? faq.answerRoman : faq.answer, action: faq.action });
-      };
-
-      const respondTo = (rawText) => {
-        const { scores, isRoman } = matchHelpQuestion(rawText, allFaqs);
-        const top = scores[0];
-        const second = scores[1];
-
-        if (!top || top.score <= 0) {
-          pushBot({
-            text: isRoman
-              ? "Mujhe thori si confusion ho rahi hai ke aap kya puchna chahtay hain 🤔 Zara simple lafzon mein bataayen, ya neeche diye gaye topics mein se koi chunain:"
-              : "I'm not totally sure what you mean 🤔 Could you try saying that a bit more simply, or pick one of these instead:",
-            quickReplies: ['buy-subscription', 'netflix-login', 'buy-credits', 'contact-support']
-              .map(id => allFaqs.find(f => f.id === id)).filter(Boolean)
-              .map(f => ({ label: f.question, faqId: f.id })),
-          });
-          return;
-        }
-
-        const candidates = scores.filter(s => s.score > 0).slice(0, 3);
-        const secondScore = second ? second.score : 0;
-        const clearLead = top.score >= 1 || top.score >= secondScore * 1.6 + 0.4;
-        if (candidates.length === 1 || clearLead) {
-          answerWithFaq(top.faq, isRoman);
-          return;
-        }
-
-        pushBot({
-          text: isRoman
-            ? "Aapka sawaal shayad in mein se ek ke baare mein hai — sahi wala batayen:"
-            : "Your question could be about one of these — which one matches?",
-          quickReplies: candidates.map(c => ({ label: c.faq.question, faqId: c.faq.id })),
-        });
-      };
-
-      const handleSend = () => {
-        const text = input.trim();
-        if (!text) return;
-        pushUser(text);
-        setInput('');
-        setTimeout(() => respondTo(text), 250);
-      };
-
-      const handleQuickReply = (qr) => {
-        pushUser(qr.label);
-        const faq = allFaqs.find(f => f.id === qr.faqId);
-        setTimeout(() => {
-          if (faq) {
-            const { isRoman } = matchHelpQuestion(qr.label, allFaqs);
-            answerWithFaq(faq, isRoman);
-          }
-        }, 200);
-      };
-
-      return (
-        <>
-          <button onClick={() => setOpen(o => !o)} className="chatbot-float" aria-label={open ? 'Close chat assistant' : 'Open chat assistant'} title="Chat Assistant">
-            <i className={`fas ${open ? 'fa-times' : 'fa-robot'}`}></i>
-          </button>
-          {open && (
-            <div className="chatbot-window">
-              <div className="chatbot-header">
-                <div className="w-9 h-9 rounded-full bg-red-500/15 flex items-center justify-center flex-shrink-0">
-                  <i className="fas fa-robot text-red-400"></i>
-                </div>
-                <div className="flex-1">
-                  <p className="text-white font-semibold text-sm">Zetlify Assistant</p>
-                  <p className="text-white/40 text-xs">Roman Urdu ya English — jaisay chahen puchein</p>
-                </div>
-                <button onClick={() => setOpen(false)} className="text-white/40 hover:text-white/80 p-1"><i className="fas fa-times"></i></button>
-              </div>
-              <div ref={scrollRef} className="chatbot-messages">
-                {messages.map(m => (
-                  <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
-                      m.role === 'user' ? 'bg-red-500/20 text-white' : 'bg-white/10 text-white/80'
-                    }`}>
-                      {m.text}
-                      {m.action && (
-                        <button onClick={() => onAction(m.action.type)} className="btn-neon-outline text-xs mt-3 block">
-                          {m.action.label} <i className="fas fa-arrow-right ml-2"></i>
-                        </button>
-                      )}
-                      {m.quickReplies && (
-                        <div className="flex flex-wrap gap-2 mt-3">
-                          {m.quickReplies.map((qr, i) => (
-                            <button key={i} onClick={() => handleQuickReply(qr)} className="text-xs px-3 py-1.5 rounded-full border border-red-500/30 text-red-300 hover:bg-red-500/10 transition">
-                              {qr.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="chatbot-input-row">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
-                  placeholder="Apna sawaal likhen..."
-                  className="input-neon flex-1"
-                />
-                <button onClick={handleSend} className="btn-neon px-4"><i className="fas fa-paper-plane"></i></button>
-              </div>
-            </div>
-          )}
         </>
       );
     }
@@ -6940,217 +6792,6 @@
       if (maxLen <= 3) return false; // too short — a 1-letter difference changes meaning
       const threshold = maxLen <= 5 ? 1 : maxLen <= 8 ? 2 : 3;
       return levenshtein(a, b) <= threshold;
-    }
-
-    function normalizeChatText(s) {
-      return (s || '')
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s]/gu, ' ') // strip punctuation, keep letters/numbers/spaces (unicode-aware)
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-
-    // Every keyword phrase (English + Roman Urdu) that should point at a
-    // given FAQ id. Multi-word phrases score higher and don't need to be
-    // adjacent/in-order in the message — every one of their words just has
-    // to appear (exactly or as a near-typo) somewhere in it.
-    const FAQ_KEYWORDS = {
-      'signup': ['sign up', 'signup', 'register', 'registration', 'create account', 'naya account', 'account banana', 'register karna', 'join karna'],
-      'signin': ['sign in', 'signin', 'login', 'log in', 'account mein ana', 'dakhil hona'],
-      'netflix-login': ['netflix login', 'netflix password', 'netflix profile', 'netflix pin', 'login netflix', 'netflix kaise chalayen', 'netflix account login', 'profile select karna', 'pin dalna', 'screen pin', 'netflix nahi chal raha', 'netflix open nahi ho raha', 'netflix code aa raha'],
-      'forgot-password': ['forgot password', 'password bhool', 'password yaad nahi', 'reset password', 'recover password', 'pasword bhool gaya', 'password nahi yaad'],
-      'buy-subscription': ['buy subscription', 'purchase subscription', 'subscription kharidna', 'subscription lena', 'kharidna hai', 'order karna', 'subscribe karna', 'netflix lena', 'kaise kharide', 'movie dekhna', 'movies dekhni', 'streaming chahiye', 'movie subscription', 'drama dekhna', 'series dekhna'],
-      'buy-credits': ['buy credits', 'add credits', 'credits kharidna', 'credit dalna', 'paisay dalna', 'wallet bharna', 'top up', 'recharge karna', 'credits kaise milengay'],
-      'insufficient-credits': ['not enough credits', 'insufficient credits', 'credits kam hain', 'paisay kam hain', 'balance kam hai', 'credit khatam'],
-      'out-of-stock': ['out of stock', 'stock khatam', 'available nahi', 'slot nahi hai', 'no slot', 'stock nahi hai'],
-      'custom-request': ['not listed', 'custom subscription', 'specific subscription chahiye', 'custom request', 'mera subscription nahi hai', 'list mein nahi hai'],
-      'deals': ['deals', 'bundle', 'offer', 'discount', 'combo', 'sasta package'],
-      'check-purchases': ['my subscriptions', 'check purchase', 'mera subscription dekhna', 'apna account dekhna', 'meri subscription kahan hai', 'purchase history'],
-      'whatsapp-locked': ['whatsapp locked', 'number lock', 'whatsapp number change nahi', 'whatsapp kyun lock', 'number kyun lock hai'],
-      'refund': ['refund', 'paisay wapis', 'wapsi', 'money back', 'cancel order', 'paisay wapas'],
-      'contact-support': ['contact support', 'madad chahiye', 'baat karni hai', 'customer service', 'kisi se baat', 'help chahiye', 'rabta karna', 'website ke baare', 'zetlify kya hai', 'yeh app kya hai', 'social media services'],
-    };
-
-    // Words that strongly suggest the message is Roman Urdu (or Roman
-    // Urdu mixed with English) rather than plain English — used only to
-    // decide which language to reply in, not for topic matching itself.
-    const ROMAN_URDU_MARKERS = [
-      'kaise', 'kese', 'kya', 'kyun', 'kyu', 'kahan', 'kab', 'kaun', 'hai', 'hain', 'nahi', 'nhi',
-      'mujhe', 'mujy', 'chahiye', 'chahye', 'karo', 'karna', 'kro', 'karain', 'karein', 'bhool', 'bhul',
-      'wapis', 'wapas', 'paisay', 'paisa', 'paise', 'dalna', 'dena', 'lena', 'milega', 'milengay',
-      'apna', 'apni', 'mera', 'meri', 'yaad', 'sahi', 'ghalat', 'madad', 'bata', 'batao', 'batayen',
-      'kaisay', 'plzz', 'plz', 'acha', 'theek', 'bilkul',
-    ];
-
-    function detectIsRomanUrdu(tokens) {
-      if (!tokens.length) return false;
-      let hits = 0;
-      tokens.forEach(t => { if (ROMAN_URDU_MARKERS.some(m => m === t || fuzzyWordMatch(m, t))) hits++; });
-      return hits >= 1 && hits / tokens.length >= 0.15;
-    }
-
-    // Score every FAQ against the message. Returns candidates sorted by
-    // score (highest first), plus whether the message reads as Roman Urdu.
-    function matchHelpQuestion(rawText, allFaqs) {
-      const norm = normalizeChatText(rawText);
-      const tokens = norm.split(' ').filter(Boolean);
-      const isRoman = detectIsRomanUrdu(tokens);
-
-      const scores = allFaqs.map(faq => {
-        let score = 0;
-        const phrases = FAQ_KEYWORDS[faq.id] || [];
-        phrases.forEach(phrase => {
-          const words = phrase.split(' ');
-          const matchedCount = words.filter(w => tokens.some(t => fuzzyWordMatch(w, t))).length;
-          if (matchedCount === words.length) score += words.length; // full phrase present
-          else if (words.length > 1 && matchedCount > 0) score += matchedCount * 0.4; // partial credit
-        });
-        // Also give small credit for words shared directly with the FAQ's
-        // own question text — helps custom admin-added FAQs (which have no
-        // entry in FAQ_KEYWORDS) still get matched reasonably.
-        const questionWords = normalizeChatText(faq.question).split(' ').filter(w => w.length > 3);
-        questionWords.forEach(w => { if (tokens.some(t => fuzzyWordMatch(w, t))) score += 0.5; });
-        return { faq, score };
-      }).sort((a, b) => b.score - a.score);
-
-      return { scores, isRoman, tokens };
-    }
-
-    function HelpChatWidget({ customFaqs, onAction }) {
-      const allFaqs = useMemo(() => [...DEFAULT_FAQS, ...(customFaqs || [])], [customFaqs]);
-      const [messages, setMessages] = useState(() => [{
-        id: 'greet', role: 'bot',
-        text: "Assalam-o-Alaikum! 👋 Main Zetlify ka Help Assistant hoon — English ya Roman Urdu, jaisay aapko easy ho, subscriptions, credits ya account ke baare mein kuch bhi puch sakte hain.\n\nHi! I'm the Zetlify Help Assistant. Ask me anything about subscriptions, credits, or your account — in English or Roman Urdu, whichever's easier for you.",
-      }]);
-      const [input, setInput] = useState('');
-      const scrollRef = useRef(null);
-
-      useEffect(() => {
-        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }, [messages]);
-
-      const pushBot = (msg) => setMessages(prev => [...prev, { id: 'm' + Date.now() + Math.random(), role: 'bot', ...msg }]);
-      const pushUser = (text) => setMessages(prev => [...prev, { id: 'm' + Date.now() + Math.random(), role: 'user', text }]);
-
-      const answerWithFaq = (faq, isRoman) => {
-        pushBot({
-          text: (isRoman && faq.answerRoman) ? faq.answerRoman : faq.answer,
-          action: faq.action,
-        });
-      };
-
-      const respondTo = (rawText) => {
-        const { scores, isRoman } = matchHelpQuestion(rawText, allFaqs);
-        const top = scores[0];
-        const second = scores[1];
-
-        if (!top || top.score <= 0) {
-          // Nothing matched at all — ask them to simplify, and offer a
-          // handful of common topics to tap instead of typing again.
-          pushBot({
-            text: isRoman
-              ? "Mujhe thori si confusion ho rahi hai ke aap kya puchna chahtay hain 🤔 Zara simple lafzon mein bataayen, ya neeche diye gaye topics mein se koi chunain:"
-              : "I'm not totally sure what you mean 🤔 Could you try saying that a bit more simply, or pick one of these instead:",
-            quickReplies: ['buy-subscription', 'buy-credits', 'check-purchases', 'contact-support']
-              .map(id => allFaqs.find(f => f.id === id)).filter(Boolean)
-              .map(f => ({ label: f.question, faqId: f.id })),
-          });
-          return;
-        }
-
-        // We don't need a perfect sentence — one clearly relevant word is
-        // enough to act on. If there's only one topic that scored at all,
-        // or the top one clearly beats the rest (either a solid absolute
-        // score or a big relative lead), just answer it — no need to make
-        // someone with a typo-ridden, one-word message pick from a list.
-        const candidates = scores.filter(s => s.score > 0).slice(0, 3);
-        const secondScore = second ? second.score : 0;
-        const clearLead = top.score >= 1 || top.score >= secondScore * 1.6 + 0.4;
-        if (candidates.length === 1 || clearLead) {
-          answerWithFaq(top.faq, isRoman);
-          return;
-        }
-
-        // Genuinely a close call between a couple of topics — ask a short
-        // follow-up instead of guessing wrong.
-        pushBot({
-          text: isRoman
-            ? "Aapka sawaal shayad in mein se ek ke baare mein hai — sahi wala batayen:"
-            : "Your question could be about one of these — which one matches?",
-          quickReplies: candidates.map(c => ({ label: c.faq.question, faqId: c.faq.id })),
-        });
-      };
-
-      const handleSend = () => {
-        const text = input.trim();
-        if (!text) return;
-        pushUser(text);
-        setInput('');
-        setTimeout(() => respondTo(text), 250); // tiny delay so it doesn't feel instant/robotic
-      };
-
-      const handleQuickReply = (qr) => {
-        pushUser(qr.label);
-        const faq = allFaqs.find(f => f.id === qr.faqId);
-        setTimeout(() => {
-          if (faq) {
-            const { isRoman } = matchHelpQuestion(qr.label, allFaqs);
-            answerWithFaq(faq, isRoman);
-          }
-        }, 200);
-      };
-
-      return (
-        <div className="max-w-3xl mx-auto mb-10">
-          <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-            <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-red-500/15 flex items-center justify-center flex-shrink-0">
-                <i className="fas fa-robot text-red-400"></i>
-              </div>
-              <div>
-                <p className="text-white font-semibold text-sm">Zetlify Help Assistant</p>
-                <p className="text-white/40 text-xs">Roman Urdu ya English — jaisay chahen puchein</p>
-              </div>
-            </div>
-            <div ref={scrollRef} className="px-5 py-4 space-y-3 overflow-y-auto" style={{ maxHeight: '420px' }}>
-              {messages.map(m => (
-                <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
-                    m.role === 'user' ? 'bg-red-500/20 text-white' : 'bg-white/10 text-white/80'
-                  }`}>
-                    {m.text}
-                    {m.action && (
-                      <button onClick={() => onAction(m.action.type)} className="btn-neon-outline text-xs mt-3 block">
-                        {m.action.label} <i className="fas fa-arrow-right ml-2"></i>
-                      </button>
-                    )}
-                    {m.quickReplies && (
-                      <div className="flex flex-wrap gap-2 mt-3">
-                        {m.quickReplies.map((qr, i) => (
-                          <button key={i} onClick={() => handleQuickReply(qr)} className="text-xs px-3 py-1.5 rounded-full border border-red-500/30 text-red-300 hover:bg-red-500/10 transition">
-                            {qr.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="px-4 py-3 border-t border-white/10 flex gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
-                placeholder="Apna sawaal likhen... (English ya Roman Urdu)"
-                className="input-neon flex-1"
-              />
-              <button onClick={handleSend} className="btn-neon px-5"><i className="fas fa-paper-plane"></i></button>
-            </div>
-          </div>
-        </div>
-      );
     }
 
     function HelpSection({ customFaqs, onAction }) {
@@ -12210,7 +11851,6 @@
               )}
 
               <ComplaintFloatButton onClick={() => setShowComplaintModal(true)} />
-              <SiteChatbot onAction={handleHelpAction} customFaqs={customFaqs} />
               <WhatsAppButton />
               <Footer />
             </>
@@ -12278,7 +11918,6 @@
                   <>
                     <CustomerDashboard customerData={customerData} onLogout={() => { resetFlow(); navigateTo('/'); }} onBack={() => setFlowStep('welcome')} deals={dealsWithSub} onDealPurchase={handleDealPurchase} subscriptions={subscriptions} cartItems={socialCartItems} onOpenCart={() => setShowSocialCart(true)} />
                     <ComplaintFloatButton onClick={() => setShowComplaintModal(true)} />
-                    <SiteChatbot onAction={handleHelpAction} customFaqs={customFaqs} />
                     <WhatsAppButton />
                     <Footer />
                   </>
@@ -12295,7 +11934,6 @@
                 <h2 className="text-4xl md:text-5xl font-bold text-white neon-text">Help & FAQs</h2>
                 <p className="text-white/30 mt-3 max-w-2xl mx-auto">Common questions about signing up, buying subscriptions, credits, and more. Tap a question to see the answer.</p>
               </div>
-              <HelpChatWidget customFaqs={customFaqs} onAction={handleHelpAction} />
               <HelpSection customFaqs={customFaqs} onAction={handleHelpAction} />
             </section>
           )}
