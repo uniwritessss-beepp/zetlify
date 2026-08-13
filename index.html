@@ -3626,7 +3626,7 @@
           }).catch((err) => console.error('Failed to save social order record:', err));
 
           addToast(`${price} credits deducted — your order is in! We'll get started shortly.`, 'success');
-          promptForReview();
+          setTimeout(() => promptForReview(), 5000); // let them see the success toast/portal first
           onClose();
         } catch (err) {
           addToast('Failed to place order: ' + (err?.error || 'unknown error'), 'error');
@@ -4359,7 +4359,6 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${subscription.name}`, { subscriptionId: subscription.id, months: totalMonths, screens });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted. Subscription activated!`, 'success');
-            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -4598,7 +4597,6 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${subscription.name}`, { subscriptionId: subscription.id, months: totalMonths });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted.`, 'success');
-            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -4808,7 +4806,6 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${subscription.name}`, { subscriptionId: subscription.id, months });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted.`, 'success');
-            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -4995,7 +4992,6 @@
             const updatedUser = await deductCredits(user.username, creditsNeeded, purchaseId, `Purchased ${deal.title}`, { dealId: deal.id });
             setUser(updatedUser);
             addToast(`✅ ${creditsNeeded} credits deducted.`, 'success');
-            promptForReview();
           } catch (err) {
             addToast('Failed to deduct credits: ' + (err?.error || 'unknown error'), 'error');
             setLoading(false);
@@ -11773,6 +11769,11 @@
             setCustomerData(buildLocalCustomerData(data, allocations));
             setFlowStep('customer-dash');
             navigateTo('/subscriptions');
+            // Let them land on their portal and actually see their new
+            // subscription details first — the review prompt only shows
+            // up 5 seconds later, instead of popping up immediately on
+            // top of the result they just asked to see.
+            setTimeout(() => promptForReview(), 5000);
           } else {
             navigateTo('/');
           }
@@ -11859,7 +11860,7 @@
           setSocialCartItems([]);
           setShowSocialCart(false);
           addToast(`RS ${result.total} deducted — your ${result.itemCount} order${result.itemCount !== 1 ? 's are' : ' is'} in! We'll get started shortly.`, 'success');
-          promptForReview();
+          setTimeout(() => promptForReview(), 5000); // let them see the success toast/portal first
         } catch (err) {
           addToast(err?.message || 'Checkout failed', 'error');
         } finally {
