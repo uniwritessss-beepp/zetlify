@@ -3053,12 +3053,12 @@ async function cleanupExpiredCustomers() {
   }
 }
 
-// ─── SPA CATCH‑ALL ROUTE ─────────────────────────────────────
+// ─── SPA CATCH‑ALL MIDDLEWARE ──────────────────────────────
 // Serve index.html for any non-API route (e.g. /admin, /dashboard)
-app.get('*', (req, res) => {
+app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
-// ─── END SPA ROUTE ──────────────────────────────────────────
+// ─── END SPA MIDDLEWARE ─────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
 
