@@ -3053,14 +3053,14 @@ async function cleanupExpiredCustomers() {
   }
 }
 
-const PORT = process.env.PORT || 5000;
-
 // ─── SPA CATCH‑ALL ROUTE ─────────────────────────────────────
 // Serve index.html for any non-API route (e.g. /admin, /dashboard)
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 // ─── END SPA ROUTE ──────────────────────────────────────────
+const PORT = process.env.PORT || 5000;
+
 
 connectDB()
   .then(() => seedData())
