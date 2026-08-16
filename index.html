@@ -11119,7 +11119,10 @@
       const [showSubscriptions, setShowSubscriptions] = useState(false);
       const [selectedSubscription, setSelectedSubscription] = useState(null);
       const [subscriptions, setSubscriptions] = useState(() => readCache('subscriptions'));
-      const [deals, setDeals] = useState(() => readCache('deals'));
+      const [deals, setDeals] = useState(() => {
+  const cached = readCache('deals');
+  return Array.isArray(cached) ? cached : [];
+});
       const [promotions, setPromotions] = useState(() => readCache('promotions'));
       const [socialServices, setSocialServices] = useState(() => readCache('socialServices'));
       const [socialOrderPlatform, setSocialOrderPlatform] = useState(null);
@@ -11182,7 +11185,7 @@
             // holds up the parts of the page people see first.
             const [subs, dealsData, promos, socialData] = await Promise.all([fetchSubscriptions(), fetchDeals(), fetchPromotions(), fetchSocialServices().catch(() => [])]);
             setSubscriptions(prev => mergeSubscriptions(subs, prev));
-            setDeals(dealsData);
+            setDeals(Array.isArray(dealsData) ? dealsData : []);
             setPromotions(promos);
             setSocialServices(socialData);
             writeCache('subscriptions', subs);
