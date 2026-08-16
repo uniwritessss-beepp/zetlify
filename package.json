@@ -8,6 +8,7 @@
   "dependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "mongodb": "5.9.2"
+    "itty-router": "^5.0.24",
+    "mongodb": "^5.9.2"
   }
 }
