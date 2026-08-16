@@ -1,4 +1,4 @@
-// src/index.js – API only (CORS fixed)
+// src/index.js – API only (CORS fixed + safe returns)
 export default {
   async fetch(request, env, ctx) {
     globalThis.env = env;
@@ -7,7 +7,7 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    // ─── CORS headers (now includes cache-control) ──────────
+    // ─── CORS headers (includes cache-control) ──────────
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
@@ -58,12 +58,12 @@ export default {
     if (path === '/api/subscriptions' && method === 'GET') {
       try {
         const data = await supabaseFetch('subscriptions', 'GET', null, '?select=*');
-        return new Response(JSON.stringify(data), {
+        const result = Array.isArray(data) ? data : [];
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       } catch (err) {
-        return new Response(JSON.stringify({ error: err.message }), {
-          status: 500,
+        return new Response(JSON.stringify([]), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
@@ -90,12 +90,73 @@ export default {
     if (path === '/api/deals' && method === 'GET') {
       try {
         const data = await supabaseFetch('deals', 'GET', null, '?select=*');
-        return new Response(JSON.stringify(data), {
+        const result = Array.isArray(data) ? data : [];
+        return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       } catch (err) {
-        return new Response(JSON.stringify({ error: err.message }), {
-          status: 500,
+        return new Response(JSON.stringify([]), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    }
+
+    // GET /api/promotions
+    if (path === '/api/promotions' && method === 'GET') {
+      try {
+        const data = await supabaseFetch('promotions', 'GET', null, '?select=*');
+        const result = Array.isArray(data) ? data : [];
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      } catch (err) {
+        return new Response(JSON.stringify([]), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    }
+
+    // GET /api/social-services
+    if (path === '/api/social-services' && method === 'GET') {
+      try {
+        const data = await supabaseFetch('socialServices', 'GET', null, '?select=*');
+        const result = Array.isArray(data) ? data : [];
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      } catch (err) {
+        return new Response(JSON.stringify([]), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    }
+
+    // GET /api/faqs
+    if (path === '/api/faqs' && method === 'GET') {
+      try {
+        const data = await supabaseFetch('faqs', 'GET', null, '?select=*');
+        const result = Array.isArray(data) ? data : [];
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      } catch (err) {
+        return new Response(JSON.stringify([]), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    }
+
+    // GET /api/admin/settings
+    if (path === '/api/admin/settings' && method === 'GET') {
+      try {
+        const data = await supabaseFetch('adminSettings', 'GET', null, '?select=*');
+        // Return first settings document or empty object
+        const result = Array.isArray(data) && data.length > 0 ? data[0] : {};
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({}), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
