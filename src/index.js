@@ -1,14 +1,14 @@
-// src/index.js – Supabase + Cloudflare Worker
+// src/index.js – Supabase + Cloudflare Worker (FIXED)
 import { Router } from 'itty-router';
 
 const router = Router();
 
-// ─── SUPABASE HELPER ──────────────────────────────
+// ─── SUPABASE HELPER (now uses globalThis.env) ──────────────
 async function supabaseFetch(table, method = 'GET', body = null, filters = '') {
-  const url = `${env.SUPABASE_URL}/rest/v1/${table}${filters}`;
+  const url = `${globalThis.env.SUPABASE_URL}/rest/v1/${table}${filters}`;
   const headers = {
-    'apikey': env.SUPABASE_ANON_KEY,
-    'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
+    'apikey': globalThis.env.SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${globalThis.env.SUPABASE_ANON_KEY}`,
     'Content-Type': 'application/json',
   };
   const options = { method, headers };
@@ -155,7 +155,7 @@ router.get('*', () => {
 
 export default {
   async fetch(request, env, ctx) {
-    globalThis.env = env;
+    globalThis.env = env; // Make env available globally
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
