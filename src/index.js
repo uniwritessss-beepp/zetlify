@@ -1,8 +1,14 @@
-// src/index.js – The absolute minimum
+// src/index.js – Step 1: Router only
+import { Router } from 'itty-router';
+
+const router = Router();
+
+router.get('/', () => {
+  return new Response('Hello from Router!');
+});
+
 export default {
   async fetch(request) {
-    return new Response('Hello from Worker!', {
-      headers: { 'Content-Type': 'text/plain' },
-    });
+    return router.handle(request);
   },
 };
